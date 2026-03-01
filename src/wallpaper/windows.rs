@@ -7,6 +7,7 @@ use std::os::windows::ffi::OsStrExt;
 use std::path::Path;
 use std::ptr;
 use windows_sys::Win32::Foundation::ERROR_SUCCESS;
+use windows_sys::Win32::Graphics::Gdi::{EnumDisplaySettingsW, DEVMODEW, ENUM_CURRENT_SETTINGS};
 use windows_sys::Win32::System::Registry::{
     RegCloseKey, RegOpenKeyExW, RegSetValueExW, HKEY, HKEY_CURRENT_USER, KEY_SET_VALUE, REG_SZ,
 };
@@ -53,6 +54,11 @@ impl WallpaperBackend for WindowsWallpaperBackend {
     }
 
     fn screen_spec(&self) -> Result<ScreenSpec> {
+        if let Some(spec) = physical_primary_screen_spec() {
+            return Ok(spec);
+        }
+
+        tracing::warn!("falling back to logical screen size via GetSystemMetrics");
         let width = unsafe { GetSystemMetrics(SM_CXSCREEN) };
         let height = unsafe { GetSystemMetrics(SM_CYSCREEN) };
         if width <= 0 || height <= 0 {
@@ -63,6 +69,24 @@ impl WallpaperBackend for WindowsWallpaperBackend {
             height: height as u32,
         })
     }
+}
+
+fn physical_primary_screen_spec() -> Option<ScreenSpec> {
+    let mut dev_mode: DEVMODEW = unsafe { std::mem::zeroed() };
+    dev_mode.dmSize = size_of::<DEVMODEW>() as u16;
+
+    let ok = unsafe { EnumDisplaySettingsW(ptr::null(), ENUM_CURRENT_SETTINGS, &mut dev_mode) };
+    if ok == 0 {
+        return None;
+    }
+
+    let width = dev_mode.dmPelsWidth;
+    let height = dev_mode.dmPelsHeight;
+    if width == 0 || height == 0 {
+        return None;
+    }
+
+    Some(ScreenSpec { width, height })
 }
 
 fn enforce_fill_style() -> Result<()> {

@@ -175,6 +175,11 @@ async fn try_switch_once(
     let screen = backend
         .screen_spec()
         .context("failed to resolve screen size")?;
+    info!(
+        width = screen.width,
+        height = screen.height,
+        "resolved screen dimensions"
+    );
     let processed = image_pipeline::prepare_for_screen(
         &candidate.local_path,
         screen,
