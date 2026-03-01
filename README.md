@@ -43,5 +43,11 @@ sources = [
 ## Run
 
 ```powershell
-cargo run --release -- bgm.hcl
+cargo run --release
 ```
+
+## Default Config Location
+
+- If no config path is provided, `bgm` uses `~/.config/bgm.hcl`.
+- On first run, if the file is missing, `bgm` creates it with recommended defaults.
+- The default source is your Pictures directory.

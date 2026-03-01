@@ -109,4 +109,3 @@ fn collect_files(root: &Path) -> Result<Vec<CacheFile>> {
     }
     Ok(out)
 }
-

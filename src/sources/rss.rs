@@ -155,7 +155,9 @@ impl ImageSource for RssSource {
         for image_url in feed_urls.into_iter().take(self.max_items) {
             match self.download_image(&image_url).await {
                 Ok(Some(path)) => {
-                    let mtime = fs::metadata(&path).ok().and_then(|meta| meta.modified().ok());
+                    let mtime = fs::metadata(&path)
+                        .ok()
+                        .and_then(|meta| meta.modified().ok());
                     candidates.push(ImageCandidate {
                         id: image_id("rss", &PathBuf::from(&image_url)),
                         origin: Origin::Rss,
@@ -176,19 +178,22 @@ impl ImageSource for RssSource {
 
 fn looks_like_image_url(url: &str) -> bool {
     extension_from_url(url)
-        .map(|ext| matches!(ext.as_str(), "jpg" | "jpeg" | "png" | "gif" | "bmp" | "webp"))
+        .map(|ext| {
+            matches!(
+                ext.as_str(),
+                "jpg" | "jpeg" | "png" | "gif" | "bmp" | "webp"
+            )
+        })
         .unwrap_or(false)
 }
 
 fn extension_from_url(url: &str) -> Option<String> {
-    Url::parse(url)
-        .ok()
-        .and_then(|parsed| {
-            Path::new(parsed.path())
-                .extension()
-                .and_then(|ext| ext.to_str())
-                .map(|x| x.to_ascii_lowercase())
-        })
+    Url::parse(url).ok().and_then(|parsed| {
+        Path::new(parsed.path())
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map(|x| x.to_ascii_lowercase())
+    })
 }
 
 fn extension_from_content_type(content_type: Option<&str>) -> Option<String> {

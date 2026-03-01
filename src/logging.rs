@@ -10,4 +10,3 @@ pub fn init(default_level: &str) {
         .compact()
         .try_init();
 }
-

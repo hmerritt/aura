@@ -102,4 +102,3 @@ fn save_output(
     }
     Ok(())
 }
-

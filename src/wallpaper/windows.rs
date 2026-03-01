@@ -5,8 +5,8 @@ use std::iter;
 use std::os::windows::ffi::OsStrExt;
 use std::path::Path;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    GetSystemMetrics, SystemParametersInfoW, SM_CXSCREEN, SM_CYSCREEN, SPI_SETDESKWALLPAPER,
-    SPIF_SENDCHANGE, SPIF_UPDATEINIFILE,
+    GetSystemMetrics, SystemParametersInfoW, SM_CXSCREEN, SM_CYSCREEN, SPIF_SENDCHANGE,
+    SPIF_UPDATEINIFILE, SPI_SETDESKWALLPAPER,
 };
 
 #[derive(Debug, Default)]

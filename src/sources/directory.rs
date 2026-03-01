@@ -90,4 +90,3 @@ impl ImageSource for DirectorySource {
         Ok(candidates)
     }
 }
-

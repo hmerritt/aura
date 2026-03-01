@@ -35,4 +35,3 @@ impl ImageSource for SingleSource {
         }])
     }
 }
-

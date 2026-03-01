@@ -41,12 +41,8 @@ impl StateStore {
         let payload = serde_json::to_string_pretty(state)?;
         fs::write(&tmp, payload).with_context(|| format!("failed to write {}", tmp.display()))?;
         fs::rename(&tmp, &self.path).with_context(|| {
-            format!(
-                "failed to atomically replace state {}",
-                self.path.display()
-            )
+            format!("failed to atomically replace state {}", self.path.display())
         })?;
         Ok(())
     }
 }
-

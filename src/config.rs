@@ -110,6 +110,23 @@ pub fn parse_from_str(content: &str, path: &Path) -> Result<BgmConfig> {
     BgmConfig::from_raw(raw, path)
 }
 
+pub fn default_hcl(pictures_dir: &Path) -> String {
+    let pictures = hcl_path(pictures_dir);
+    format!(
+        r#"timer = 300
+remoteUpdateTimer = 3600
+image_format = "jpg"
+jpeg_quality = 90
+log_level = "info"
+
+sources = [
+  {{ type = "directory", path = "{}", recursive = true, extensions = ["jpg", "jpeg", "png", "webp", "bmp", "gif"] }}
+]
+"#,
+        pictures
+    )
+}
+
 impl BgmConfig {
     fn from_raw(raw: RawConfig, config_path: &Path) -> Result<Self> {
         let config_parent = config_path.parent().unwrap_or_else(|| Path::new("."));
@@ -178,7 +195,10 @@ fn validate_source(source: RawSourceConfig, config_parent: &Path) -> Result<Sour
         RawSourceConfig::File { path } => {
             let path = resolve_path(path, config_parent);
             if !path.exists() || !path.is_file() {
-                bail!("file source does not exist or is not a file: {}", path.display());
+                bail!(
+                    "file source does not exist or is not a file: {}",
+                    path.display()
+                );
             }
             Ok(SourceConfig::File { path })
         }
@@ -233,16 +253,17 @@ fn resolve_path(path: PathBuf, config_parent: &Path) -> PathBuf {
     }
 }
 
+fn hcl_path(path: &Path) -> String {
+    path.to_string_lossy()
+        .replace('\\', "/")
+        .replace('"', "\\\"")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;
-    use std::path::Path;
     use tempfile::tempdir;
-
-    fn hcl_path(path: &Path) -> String {
-        path.to_string_lossy().replace('\\', "/")
-    }
 
     #[test]
     fn parses_valid_config() {
@@ -287,5 +308,28 @@ sources = [ {{ type = "directory", path = "{}" }} ]
         );
 
         assert!(parse_from_str(&raw, &tmp.path().join("bgm.hcl")).is_err());
+    }
+
+    #[test]
+    fn generated_default_hcl_parses() {
+        let tmp = tempdir().unwrap();
+        let pictures = tmp.path().join("Pictures");
+        fs::create_dir_all(&pictures).unwrap();
+
+        let raw = default_hcl(&pictures);
+        let cfg = parse_from_str(&raw, &tmp.path().join("bgm.hcl")).unwrap();
+        assert_eq!(cfg.timer.as_secs(), 300);
+        assert_eq!(cfg.remote_update_timer.as_secs(), 3600);
+        assert_eq!(cfg.sources.len(), 1);
+
+        match &cfg.sources[0] {
+            SourceConfig::Directory {
+                path, recursive, ..
+            } => {
+                assert_eq!(path, &pictures);
+                assert!(*recursive);
+            }
+            _ => panic!("expected directory source in generated config"),
+        }
     }
 }

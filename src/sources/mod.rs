@@ -32,7 +32,10 @@ pub trait ImageSource: Send {
     async fn refresh(&mut self) -> Result<Vec<ImageCandidate>>;
 }
 
-pub fn build_sources(config: &BgmConfig, cache: Arc<CacheManager>) -> Result<Vec<Box<dyn ImageSource>>> {
+pub fn build_sources(
+    config: &BgmConfig,
+    cache: Arc<CacheManager>,
+) -> Result<Vec<Box<dyn ImageSource>>> {
     let mut sources: Vec<Box<dyn ImageSource>> = Vec::new();
 
     for source in &config.sources {
@@ -63,11 +66,7 @@ pub fn build_sources(config: &BgmConfig, cache: Arc<CacheManager>) -> Result<Vec
                         .ensure_remote_source_dir(url)
                         .with_context(|| format!("failed to initialize RSS cache for {url}"))?
                 };
-                sources.push(Box::new(rss::RssSource::new(
-                    url.clone(),
-                    *max_items,
-                    dir,
-                )?));
+                sources.push(Box::new(rss::RssSource::new(url.clone(), *max_items, dir)?));
             }
         }
     }
@@ -91,4 +90,3 @@ pub fn image_id(prefix: &str, path: &Path) -> String {
     let raw = format!("{prefix}:{}", path.to_string_lossy());
     blake3::hash(raw.as_bytes()).to_hex().to_string()
 }
-

@@ -36,7 +36,8 @@ impl RotationManager {
             .collect();
 
         self.remaining.retain(|id| self.pool.contains_key(id));
-        self.shown_current_cycle.retain(|id| self.pool.contains_key(id));
+        self.shown_current_cycle
+            .retain(|id| self.pool.contains_key(id));
 
         let existing_remaining: HashSet<&str> = self.remaining.iter().map(|s| s.as_str()).collect();
         let mut new_ids: Vec<String> = self
