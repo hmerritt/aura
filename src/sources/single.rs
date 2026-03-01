@@ -1,5 +1,7 @@
 use crate::errors::Result;
-use crate::sources::{image_id, is_supported_image, ImageCandidate, ImageSource, Origin};
+use crate::sources::{
+    image_id, is_supported_image, ImageCandidate, ImageSource, Origin, SourceKind,
+};
 use async_trait::async_trait;
 use std::fs;
 use std::path::PathBuf;
@@ -19,6 +21,10 @@ impl SingleSource {
 impl ImageSource for SingleSource {
     fn name(&self) -> &str {
         "single"
+    }
+
+    fn kind(&self) -> SourceKind {
+        SourceKind::File
     }
 
     async fn refresh(&mut self) -> Result<Vec<ImageCandidate>> {

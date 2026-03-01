@@ -1,5 +1,7 @@
 use crate::errors::Result;
-use crate::sources::{image_id, is_supported_image, ImageCandidate, ImageSource, Origin};
+use crate::sources::{
+    image_id, is_supported_image, ImageCandidate, ImageSource, Origin, SourceKind,
+};
 use async_trait::async_trait;
 use std::collections::HashSet;
 use std::fs;
@@ -48,6 +50,10 @@ impl DirectorySource {
 impl ImageSource for DirectorySource {
     fn name(&self) -> &str {
         "directory"
+    }
+
+    fn kind(&self) -> SourceKind {
+        SourceKind::Directory
     }
 
     async fn refresh(&mut self) -> Result<Vec<ImageCandidate>> {

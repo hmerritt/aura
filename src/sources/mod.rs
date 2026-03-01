@@ -18,6 +18,13 @@ pub enum Origin {
     Rss,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourceKind {
+    File,
+    Directory,
+    Rss,
+}
+
 #[derive(Debug, Clone)]
 pub struct ImageCandidate {
     pub id: String,
@@ -29,6 +36,7 @@ pub struct ImageCandidate {
 #[async_trait]
 pub trait ImageSource: Send {
     fn name(&self) -> &str;
+    fn kind(&self) -> SourceKind;
     async fn refresh(&mut self) -> Result<Vec<ImageCandidate>>;
 }
 

@@ -1,5 +1,5 @@
 use crate::errors::Result;
-use crate::sources::{image_id, ImageCandidate, ImageSource, Origin};
+use crate::sources::{image_id, ImageCandidate, ImageSource, Origin, SourceKind};
 use anyhow::Context;
 use async_trait::async_trait;
 use feed_rs::parser;
@@ -134,6 +134,10 @@ impl RssSource {
 impl ImageSource for RssSource {
     fn name(&self) -> &str {
         "rss"
+    }
+
+    fn kind(&self) -> SourceKind {
+        SourceKind::Rss
     }
 
     async fn refresh(&mut self) -> Result<Vec<ImageCandidate>> {

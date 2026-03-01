@@ -15,7 +15,7 @@ use crate::config::load_from_path;
 use crate::errors::Result;
 use crate::rotation::RotationManager;
 use crate::scheduler::{Scheduler, SchedulerEvent};
-use crate::sources::{build_sources, ImageCandidate, ImageSource, Origin};
+use crate::sources::{build_sources, ImageCandidate, ImageSource, Origin, SourceKind};
 use crate::state::{PersistedState, StateStore};
 use crate::tray::TrayEvent;
 use anyhow::Context;
@@ -63,9 +63,9 @@ async fn main() -> Result<()> {
         }
     };
 
-    let mut candidates = refresh_all_sources(&mut sources).await?;
+    let initial_candidates = refresh_all_sources(&mut sources).await?;
     let mut rotation = RotationManager::new();
-    rotation.rebuild_pool(candidates.clone());
+    rotation.rebuild_pool(initial_candidates);
     rotation.restore_state(&persisted_state);
 
     let (tray_event_tx, mut tray_event_rx) = tokio::sync::mpsc::unbounded_channel::<TrayEvent>();
@@ -104,6 +104,13 @@ async fn main() -> Result<()> {
             }
             tray_event = tray_event_rx.recv() => {
                 if let Some(TrayEvent::NextWallpaper) = tray_event {
+                    match refresh_local_sources(&mut sources).await {
+                        Ok(updated) => {
+                            rotation.rebuild_pool(updated);
+                            info!(pool_size = rotation.pool_size(), "local refresh complete before tray switch");
+                        }
+                        Err(error) => warn!(error = %error, "local refresh failed before tray switch"),
+                    }
                     match try_switch_once(&mut rotation, cache.as_ref(), &*backend, &config).await {
                         Ok(Some(next_id)) => {
                             last_image_id = Some(next_id);
@@ -119,6 +126,13 @@ async fn main() -> Result<()> {
             event = scheduler.next_event() => {
                 match event {
                     SchedulerEvent::SwitchImage => {
+                        match refresh_local_sources(&mut sources).await {
+                            Ok(updated) => {
+                                rotation.rebuild_pool(updated);
+                                info!(pool_size = rotation.pool_size(), "local refresh complete before timer switch");
+                            }
+                            Err(error) => warn!(error = %error, "local refresh failed before timer switch"),
+                        }
                         match try_switch_once(&mut rotation, cache.as_ref(), &*backend, &config).await {
                             Ok(Some(next_id)) => {
                                 last_image_id = Some(next_id);
@@ -137,9 +151,8 @@ async fn main() -> Result<()> {
                     SchedulerEvent::RefreshRemote => {
                         match refresh_all_sources(&mut sources).await {
                             Ok(updated) => {
-                                candidates = updated;
-                                rotation.rebuild_pool(candidates.clone());
-                                info!(pool_size = rotation.pool_size(), "refresh complete");
+                                rotation.rebuild_pool(updated);
+                                info!(pool_size = rotation.pool_size(), "full refresh complete");
                             }
                             Err(error) => warn!(error = %error, "source refresh failed"),
                         }
@@ -153,13 +166,40 @@ async fn main() -> Result<()> {
 }
 
 async fn refresh_all_sources(sources: &mut [Box<dyn ImageSource>]) -> Result<Vec<ImageCandidate>> {
+    refresh_sources_filtered(sources, |_| true, "full").await
+}
+
+async fn refresh_local_sources(
+    sources: &mut [Box<dyn ImageSource>],
+) -> Result<Vec<ImageCandidate>> {
+    refresh_sources_filtered(
+        sources,
+        |kind| matches!(kind, SourceKind::File | SourceKind::Directory),
+        "local",
+    )
+    .await
+}
+
+async fn refresh_sources_filtered<F>(
+    sources: &mut [Box<dyn ImageSource>],
+    mut should_refresh: F,
+    scope: &str,
+) -> Result<Vec<ImageCandidate>>
+where
+    F: FnMut(SourceKind) -> bool,
+{
     let mut candidates = Vec::new();
     let mut unique = HashSet::new();
 
     for source in sources.iter_mut() {
+        if !should_refresh(source.kind()) {
+            continue;
+        }
+
         match source.refresh().await {
             Ok(items) => {
                 info!(
+                    scope = scope,
                     source = source.name(),
                     count = items.len(),
                     "source refresh"
@@ -192,7 +232,7 @@ async fn refresh_all_sources(sources: &mut [Box<dyn ImageSource>]) -> Result<Vec
             .then_with(|| a.local_path.cmp(&b.local_path))
     });
 
-    info!(count = candidates.len(), "total merged candidates");
+    info!(scope = scope, count = candidates.len(), "merged candidates");
     Ok(candidates)
 }
 
