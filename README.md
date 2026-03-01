@@ -20,6 +20,9 @@ A rust program, continually running, to manage the current OS background image.
 
 - Windows-first wallpaper backend (`SystemParametersInfoW`)
 - Forces Windows wallpaper style to `Fill` on apply
+- Windows tray icon (enabled by default)
+  - Double-click tray icon: switch to next wallpaper immediately
+  - Right-click tray icon: open active `bgm.hcl`
 - No-repeat shuffle rotation cycle
 - Local and remote image cache
 - Cover resize + center crop image processing
@@ -45,6 +48,12 @@ sources = [
 
 ```powershell
 cargo run --release
+```
+
+Opt out of tray mode:
+
+```powershell
+cargo run --release -- --no-tray
 ```
 
 ## Default Config Location
