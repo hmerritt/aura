@@ -1,5 +1,5 @@
 use crate::errors::Result;
-use crate::tray::{format_running_duration, SessionStats, TrayEvent};
+use crate::tray::{format_running_duration, tray_stat_visibility, SessionStats, TrayEvent};
 use anyhow::{anyhow, bail};
 use std::mem::size_of;
 use std::path::PathBuf;
@@ -321,6 +321,7 @@ unsafe fn show_context_menu(hwnd: HWND, data: &WindowData) {
     let skipped_label = wide_null(&format_stat_row("Skipped", &skipped_value));
     let running_label = wide_null(&format_stat_row("Running", &running_value));
     let shader_active = data.session_stats.is_shader_active();
+    let stat_visibility = tray_stat_visibility(shader_active);
     let next_background_label = wide_null("Next Background");
     let reload_settings_label = wide_null("Reload Settings");
     let settings_label = wide_null("Settings");
@@ -347,30 +348,42 @@ unsafe fn show_context_menu(hwnd: HWND, data: &WindowData) {
     );
 
     let mut position: u32 = 0;
-    if !insert_disabled_menu_item(menu, position, timer_label.as_ptr()) {
-        tracing::warn!("failed to add Timer tray menu item");
+    if stat_visibility.timer {
+        if !insert_disabled_menu_item(menu, position, timer_label.as_ptr()) {
+            tracing::warn!("failed to add Timer tray menu item");
+        }
+        position += 1;
     }
-    position += 1;
-    if !insert_disabled_menu_item(menu, position, remote_update_label.as_ptr()) {
-        tracing::warn!("failed to add Remote Update tray menu item");
+    if stat_visibility.remote_update {
+        if !insert_disabled_menu_item(menu, position, remote_update_label.as_ptr()) {
+            tracing::warn!("failed to add Remote Update tray menu item");
+        }
+        position += 1;
     }
-    position += 1;
-    if !insert_disabled_menu_item(menu, position, images_label.as_ptr()) {
-        tracing::warn!("failed to add Images tray menu item");
+    if stat_visibility.images {
+        if !insert_disabled_menu_item(menu, position, images_label.as_ptr()) {
+            tracing::warn!("failed to add Images tray menu item");
+        }
+        position += 1;
     }
-    position += 1;
-    if !insert_disabled_menu_item(menu, position, shown_label.as_ptr()) {
-        tracing::warn!("failed to add Shown tray menu item");
+    if stat_visibility.shown {
+        if !insert_disabled_menu_item(menu, position, shown_label.as_ptr()) {
+            tracing::warn!("failed to add Shown tray menu item");
+        }
+        position += 1;
     }
-    position += 1;
-    if !insert_disabled_menu_item(menu, position, skipped_label.as_ptr()) {
-        tracing::warn!("failed to add Skipped tray menu item");
+    if stat_visibility.skipped {
+        if !insert_disabled_menu_item(menu, position, skipped_label.as_ptr()) {
+            tracing::warn!("failed to add Skipped tray menu item");
+        }
+        position += 1;
     }
-    position += 1;
-    if !insert_disabled_menu_item(menu, position, running_label.as_ptr()) {
-        tracing::warn!("failed to add Running tray menu item");
+    if stat_visibility.running {
+        if !insert_disabled_menu_item(menu, position, running_label.as_ptr()) {
+            tracing::warn!("failed to add Running tray menu item");
+        }
+        position += 1;
     }
-    position += 1;
     if !insert_separator_menu_item(menu, position) {
         tracing::warn!("failed to add tray stats separator menu item");
     }

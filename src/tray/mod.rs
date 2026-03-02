@@ -148,6 +148,27 @@ pub(crate) fn format_config_duration(duration: Duration) -> String {
     parts.join(" ")
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct TrayStatVisibility {
+    pub timer: bool,
+    pub remote_update: bool,
+    pub images: bool,
+    pub shown: bool,
+    pub skipped: bool,
+    pub running: bool,
+}
+
+pub(crate) fn tray_stat_visibility(shader_active: bool) -> TrayStatVisibility {
+    TrayStatVisibility {
+        timer: !shader_active,
+        remote_update: !shader_active,
+        images: !shader_active,
+        shown: !shader_active,
+        skipped: !shader_active,
+        running: true,
+    }
+}
+
 #[cfg(windows)]
 mod windows;
 
@@ -259,6 +280,28 @@ mod tests {
         assert!(stats.is_shader_active());
         assert_eq!(stats.images_shown(), 2);
         assert_eq!(stats.manual_skips(), 1);
+    }
+
+    #[test]
+    fn tray_stat_visibility_shows_all_stats_in_image_mode() {
+        let visibility = tray_stat_visibility(false);
+        assert!(visibility.timer);
+        assert!(visibility.remote_update);
+        assert!(visibility.images);
+        assert!(visibility.shown);
+        assert!(visibility.skipped);
+        assert!(visibility.running);
+    }
+
+    #[test]
+    fn tray_stat_visibility_hides_non_running_stats_in_shader_mode() {
+        let visibility = tray_stat_visibility(true);
+        assert!(!visibility.timer);
+        assert!(!visibility.remote_update);
+        assert!(!visibility.images);
+        assert!(!visibility.shown);
+        assert!(!visibility.skipped);
+        assert!(visibility.running);
     }
 
     #[test]
