@@ -177,6 +177,14 @@ impl ApplicationHandler<UserEvent> for RendererApp {
                 return;
             }
         };
+        if let Err(error) = window.set_cursor_hittest(false) {
+            self.emit_fatal(format!(
+                "failed to enable desktop input passthrough: {error}"
+            ));
+            event_loop.exit();
+            return;
+        }
+        tracing::info!("shader render window mouse passthrough enabled");
 
         let hwnd = match window_hwnd(window.as_ref()) {
             Ok(hwnd) => hwnd,
