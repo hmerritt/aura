@@ -4,6 +4,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+const RUSTGPU_TOOLCHAIN: &str = "nightly-2025-08-04";
+
 #[derive(Debug, Clone)]
 pub struct CompileOptions {
     pub shader_crate: PathBuf,
@@ -34,6 +36,7 @@ pub fn compile_shader(options: &CompileOptions) -> Result<()> {
     }
 
     let output = Command::new("cargo")
+        .arg(format!("+{RUSTGPU_TOOLCHAIN}"))
         .arg("run")
         .arg("--release")
         .arg("--quiet")
@@ -52,9 +55,11 @@ pub fn compile_shader(options: &CompileOptions) -> Result<()> {
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
         bail!(
-            "shader compile failed\nstdout:\n{}\nstderr:\n{}",
+            "shader compile failed\nstdout:\n{}\nstderr:\n{}\n\nrequired rust-gpu toolchain setup:\n  rustup toolchain install {}\n  rustup component add --toolchain {} rust-src rustc-dev llvm-tools",
             stdout.trim(),
-            stderr.trim()
+            stderr.trim(),
+            RUSTGPU_TOOLCHAIN,
+            RUSTGPU_TOOLCHAIN
         );
     }
 

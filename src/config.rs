@@ -178,13 +178,13 @@ log_level = "warn"
 renderer = "image"
 
 # Shader mode options (used when renderer = "shader")
-#shader = {
-#	crate_path = "shaders/live_bg_shader"
+#shader = {{
+#	crate_path = "shaders/gradient_shader"
 #	target_fps = 60
 #	hot_reload = true
 #	reload_debounce_ms = 300
 #	mouse_enabled = false
-#}
+#}}
 "#,
         pictures
     )
@@ -266,7 +266,7 @@ fn parse_shader_config(
 ) -> Result<Option<ShaderConfig>> {
     let Some(raw) = raw else {
         if renderer == RendererMode::Shader {
-            let crate_path = resolve_path(PathBuf::from("shaders/live_bg_shader"), config_parent);
+            let crate_path = resolve_path(PathBuf::from("shaders/gradient_shader"), config_parent);
             if !crate_path.exists() || !crate_path.is_dir() {
                 bail!(
                     "shader crate path does not exist or is not a directory: {}",
@@ -286,7 +286,7 @@ fn parse_shader_config(
 
     let crate_path = resolve_path(
         raw.crate_path
-            .unwrap_or_else(|| PathBuf::from("shaders/live_bg_shader")),
+            .unwrap_or_else(|| PathBuf::from("shaders/gradient_shader")),
         config_parent,
     );
     if renderer == RendererMode::Shader && (!crate_path.exists() || !crate_path.is_dir()) {
@@ -498,6 +498,7 @@ sources = [ {{ type = "directory", path = "{}" }} ]
         fs::create_dir_all(&pictures).unwrap();
 
         let raw = default_hcl(&pictures);
+        assert!(raw.contains("crate_path = \"shaders/gradient_shader\""));
         let cfg = parse_from_str(&raw, &tmp.path().join("bgm.hcl")).unwrap();
         // `default_hcl` uses explicit template durations (3h / 2h), not parser fallback defaults.
         assert_eq!(cfg.timer.as_secs(), 10_800);

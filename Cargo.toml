@@ -1,6 +1,6 @@
 [package]
 name = "bgm"
-version = "0.8.16"
+version = "0.10.16"
 edition = "2021"
 
 [dependencies]

@@ -1,6 +1,6 @@
 #![cfg_attr(target_arch = "spirv", no_std)]
 
-use spirv_std::glam::{Vec2, Vec4};
+use spirv_std::glam::{Vec2, Vec3, Vec4};
 use spirv_std::num_traits::Float;
 use spirv_std::spirv;
 
@@ -39,21 +39,22 @@ pub fn fs_main(
     output: &mut Vec4,
 ) {
     let resolution = Vec2::new(uniforms.resolution.x.max(1.0), uniforms.resolution.y.max(1.0));
-    let uv = Vec2::new(frag_coord.x / resolution.x, frag_coord.y / resolution.y);
-    let center = uv - Vec2::splat(0.5);
-    let dist = center.length();
+    let mr = resolution.x.min(resolution.y);
+    let uv = (Vec2::new(frag_coord.x, frag_coord.y) * 2.0 - resolution) / mr;
 
-    let mut mouse_mix = 0.0;
-    if uniforms.mouse_enabled != 0 {
-        let mouse = Vec2::new(uniforms.mouse.x / resolution.x, uniforms.mouse.y / resolution.y);
-        mouse_mix = (uv - mouse).length().clamp(0.0, 1.0);
+    let mut d = -uniforms.time_seconds * 0.8;
+    let mut a = 0.0;
+    for i in 0..8 {
+        let i_f = i as f32;
+        a += (i_f - d - a * uv.x).cos();
+        d += (uv.y * i_f + a).sin();
     }
+    d += uniforms.time_seconds * 0.5;
+    let _ = d;
 
-    let t = uniforms.time_seconds;
-    let wave = (12.0 * dist - t * 2.5).sin() * 0.5 + 0.5;
-    let r = (uv.x + t * 0.08).sin() * 0.5 + 0.5;
-    let g = (uv.y + t * 0.11).cos() * 0.5 + 0.5;
-    let b = (wave + 0.2 * (1.0 - mouse_mix)).clamp(0.0, 1.0);
-
-    *output = Vec4::new(r, g, b, 1.0);
+    let color_a = Vec3::new(0.0, 0.4, 1.0);
+    let color_b = Vec3::new(1.0, 1.0, 1.0);
+    let t = a.cos() * 0.5 + 0.5;
+    let col = color_a + (color_b - color_a) * t;
+    *output = Vec4::new(col.x, col.y, col.z, 1.0);
 }

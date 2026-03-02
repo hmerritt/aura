@@ -46,7 +46,7 @@ renderer = "image"
 
 # Shader mode options (used when renderer = "shader")
 # [shader]
-# crate_path = "C:/path/to/live_bg_shader"
+# crate_path = "C:/path/to/gradient_shader"
 # target_fps = 60
 # hot_reload = true
 # reload_debounce_ms = 300
