@@ -9,18 +9,40 @@ pub enum TrayEvent {
 
 #[derive(Debug)]
 pub struct SessionStats {
+    timer_display: String,
+    remote_update_timer_display: String,
+    total_images: AtomicU64,
     images_shown: AtomicU64,
     manual_skips: AtomicU64,
     started_at: Instant,
 }
 
 impl SessionStats {
-    pub fn new() -> Self {
+    pub fn new(timer_display: String, remote_update_timer_display: String) -> Self {
         Self {
+            timer_display,
+            remote_update_timer_display,
+            total_images: AtomicU64::new(0),
             images_shown: AtomicU64::new(0),
             manual_skips: AtomicU64::new(0),
             started_at: Instant::now(),
         }
+    }
+
+    pub fn timer_display(&self) -> &str {
+        &self.timer_display
+    }
+
+    pub fn remote_update_timer_display(&self) -> &str {
+        &self.remote_update_timer_display
+    }
+
+    pub fn set_total_images(&self, total_images: u64) {
+        self.total_images.store(total_images, Ordering::Relaxed);
+    }
+
+    pub fn total_images(&self) -> u64 {
+        self.total_images.load(Ordering::Relaxed)
     }
 
     pub fn inc_images_shown(&self) {
@@ -64,6 +86,34 @@ pub(crate) fn format_running_duration(duration: Duration) -> String {
     }
 
     format!("{total_hours}h {minutes}m")
+}
+
+pub(crate) fn format_config_duration(duration: Duration) -> String {
+    let total_seconds = duration.as_secs();
+    if total_seconds == 0 {
+        return "0s".to_string();
+    }
+
+    let days = total_seconds / 86_400;
+    let hours = (total_seconds % 86_400) / 3_600;
+    let minutes = (total_seconds % 3_600) / 60;
+    let seconds = total_seconds % 60;
+
+    let mut parts = Vec::new();
+    if days > 0 {
+        parts.push(format!("{days}d"));
+    }
+    if hours > 0 {
+        parts.push(format!("{hours}h"));
+    }
+    if minutes > 0 {
+        parts.push(format!("{minutes}m"));
+    }
+    if seconds > 0 {
+        parts.push(format!("{seconds}s"));
+    }
+
+    parts.join(" ")
 }
 
 #[cfg(windows)]
@@ -149,15 +199,35 @@ mod tests {
 
     #[test]
     fn session_stats_counters_increment() {
-        let stats = SessionStats::new();
+        let stats = SessionStats::new("3h".to_string(), "2h".to_string());
         assert_eq!(stats.images_shown(), 0);
         assert_eq!(stats.manual_skips(), 0);
+        assert_eq!(stats.total_images(), 0);
+        assert_eq!(stats.timer_display(), "3h");
+        assert_eq!(stats.remote_update_timer_display(), "2h");
 
+        stats.set_total_images(42);
         stats.inc_images_shown();
         stats.inc_images_shown();
         stats.inc_manual_skips();
 
+        assert_eq!(stats.total_images(), 42);
         assert_eq!(stats.images_shown(), 2);
         assert_eq!(stats.manual_skips(), 1);
+    }
+
+    #[test]
+    fn format_config_duration_formats_expected_shapes() {
+        assert_eq!(format_config_duration(Duration::from_secs(40)), "40s");
+        assert_eq!(format_config_duration(Duration::from_secs(12 * 60)), "12m");
+        assert_eq!(format_config_duration(Duration::from_secs(3 * 60 * 60)), "3h");
+        assert_eq!(
+            format_config_duration(Duration::from_secs(90 * 60)),
+            "1h 30m"
+        );
+        assert_eq!(
+            format_config_duration(Duration::from_secs(24 * 60 * 60 + 61)),
+            "1d 1m 1s"
+        );
     }
 }

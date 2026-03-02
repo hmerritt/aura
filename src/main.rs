@@ -18,7 +18,7 @@ use crate::rotation::RotationManager;
 use crate::scheduler::{Scheduler, SchedulerEvent};
 use crate::sources::{build_sources, ImageCandidate, ImageSource, Origin, SourceKind};
 use crate::state::{PersistedState, StateStore};
-use crate::tray::{SessionStats, TrayEvent};
+use crate::tray::{format_config_duration, SessionStats, TrayEvent};
 use anyhow::Context;
 use std::collections::HashSet;
 use std::env;
@@ -72,10 +72,16 @@ async fn main() -> Result<()> {
     };
 
     let initial_candidates = refresh_all_sources(&mut sources).await?;
+    let (mut local_images_count, mut remote_images_count) =
+        count_images_by_origin(&initial_candidates);
     let mut rotation = RotationManager::new();
     rotation.rebuild_pool(initial_candidates);
     rotation.restore_state(&persisted_state);
-    let session_stats = Arc::new(SessionStats::new());
+    let session_stats = Arc::new(SessionStats::new(
+        format_config_duration(config.timer),
+        format_config_duration(config.remote_update_timer),
+    ));
+    session_stats.set_total_images(local_images_count + remote_images_count);
 
     let (tray_event_tx, mut tray_event_rx) = tokio::sync::mpsc::unbounded_channel::<TrayEvent>();
     let mut _single_instance_guard = None;
@@ -121,6 +127,10 @@ async fn main() -> Result<()> {
                     Some(TrayEvent::NextWallpaper) => {
                         match refresh_local_sources(&mut sources).await {
                             Ok(updated) => {
+                                let (next_local_count, _) = count_images_by_origin(&updated);
+                                local_images_count = next_local_count;
+                                session_stats
+                                    .set_total_images(local_images_count + remote_images_count);
                                 rotation.rebuild_pool(updated);
                                 info!(pool_size = rotation.pool_size(), "local refresh complete before tray switch");
                             }
@@ -156,6 +166,10 @@ async fn main() -> Result<()> {
                     SchedulerEvent::SwitchImage => {
                         match refresh_local_sources(&mut sources).await {
                             Ok(updated) => {
+                                let (next_local_count, _) = count_images_by_origin(&updated);
+                                local_images_count = next_local_count;
+                                session_stats
+                                    .set_total_images(local_images_count + remote_images_count);
                                 rotation.rebuild_pool(updated);
                                 info!(pool_size = rotation.pool_size(), "local refresh complete before timer switch");
                             }
@@ -180,6 +194,12 @@ async fn main() -> Result<()> {
                     SchedulerEvent::RefreshRemote => {
                         match refresh_all_sources(&mut sources).await {
                             Ok(updated) => {
+                                let (next_local_count, next_remote_count) =
+                                    count_images_by_origin(&updated);
+                                local_images_count = next_local_count;
+                                remote_images_count = next_remote_count;
+                                session_stats
+                                    .set_total_images(local_images_count + remote_images_count);
                                 rotation.rebuild_pool(updated);
                                 info!(pool_size = rotation.pool_size(), "full refresh complete");
                             }
@@ -313,6 +333,20 @@ fn origin_name(origin: Origin) -> &'static str {
         Origin::Directory => "directory",
         Origin::Rss => "rss",
     }
+}
+
+fn count_images_by_origin(candidates: &[ImageCandidate]) -> (u64, u64) {
+    let mut local_images_count = 0_u64;
+    let mut remote_images_count = 0_u64;
+
+    for candidate in candidates {
+        match candidate.origin {
+            Origin::File | Origin::Directory => local_images_count += 1,
+            Origin::Rss => remote_images_count += 1,
+        }
+    }
+
+    (local_images_count, remote_images_count)
 }
 
 fn persist_state(

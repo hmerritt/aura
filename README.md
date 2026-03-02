@@ -96,7 +96,8 @@ cargo run --release -- --version
 - Forces Windows wallpaper style to `Fill` on apply
 - Windows tray icon (enabled by default)
     - Double-click tray icon: switch to next wallpaper immediately
-    - Right-click tray icon: shows session stats (`Images`, `Skipped`, `Running`) and menu items `Next Background`, `Settings`, and `Exit`
+    - Right-click tray icon: shows stats (`Timer`, `Remote Update`, `Images`, `Shown`, `Skipped`, `Running`) and menu items `Next Background`, `Settings`, and `Exit`
+    - `Images` counts unique merged candidates across all sources, and `Shown` counts images applied in the current session
     - `Next Background` switches immediately, `Settings` opens the active `bgm.hcl`, and a separator appears above `Exit`
     - `Running` is minute-precision (`<1m` when under a minute) and shows days once runtime exceeds 72 hours (example: `3d 21h 49m`)
     - Uses embedded tray/menu icons generated from `assets/tray.png`, `assets/menu-next-background.png`, `assets/menu-settings.png`, and `assets/menu-exit.png` (menu icons fall back to embedded icon resources if bitmap loading fails)

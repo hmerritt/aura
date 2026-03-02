@@ -300,11 +300,17 @@ unsafe fn show_context_menu(hwnd: HWND, data: &WindowData) {
         return;
     }
 
-    let images_value = data.session_stats.images_shown().to_string();
+    let timer_value = data.session_stats.timer_display().to_string();
+    let remote_update_value = data.session_stats.remote_update_timer_display().to_string();
+    let images_value = data.session_stats.total_images().to_string();
+    let shown_value = data.session_stats.images_shown().to_string();
     let skipped_value = data.session_stats.manual_skips().to_string();
     let running_value = format_running_duration(data.session_stats.running_duration());
 
+    let timer_label = wide_null(&format_stat_row("Timer", &timer_value));
+    let remote_update_label = wide_null(&format_stat_row("Remote Update", &remote_update_value));
     let images_label = wide_null(&format_stat_row("Images", &images_value));
+    let shown_label = wide_null(&format_stat_row("Shown", &shown_value));
     let skipped_label = wide_null(&format_stat_row("Skipped", &skipped_value));
     let running_label = wide_null(&format_stat_row("Running", &running_value));
     let next_background_label = wide_null("Next Background");
@@ -326,21 +332,30 @@ unsafe fn show_context_menu(hwnd: HWND, data: &WindowData) {
         EXIT_ICON_FALLBACK_RESOURCE_ID,
     );
 
-    if !insert_disabled_menu_item(menu, 0, images_label.as_ptr()) {
+    if !insert_disabled_menu_item(menu, 0, timer_label.as_ptr()) {
+        tracing::warn!("failed to add Timer tray menu item");
+    }
+    if !insert_disabled_menu_item(menu, 1, remote_update_label.as_ptr()) {
+        tracing::warn!("failed to add Remote Update tray menu item");
+    }
+    if !insert_disabled_menu_item(menu, 2, images_label.as_ptr()) {
         tracing::warn!("failed to add Images tray menu item");
     }
-    if !insert_disabled_menu_item(menu, 1, skipped_label.as_ptr()) {
+    if !insert_disabled_menu_item(menu, 3, shown_label.as_ptr()) {
+        tracing::warn!("failed to add Shown tray menu item");
+    }
+    if !insert_disabled_menu_item(menu, 4, skipped_label.as_ptr()) {
         tracing::warn!("failed to add Skipped tray menu item");
     }
-    if !insert_disabled_menu_item(menu, 2, running_label.as_ptr()) {
+    if !insert_disabled_menu_item(menu, 5, running_label.as_ptr()) {
         tracing::warn!("failed to add Running tray menu item");
     }
-    if !insert_separator_menu_item(menu, 3) {
+    if !insert_separator_menu_item(menu, 6) {
         tracing::warn!("failed to add tray stats separator menu item");
     }
     if !insert_command_menu_item(
         menu,
-        4,
+        7,
         TRAY_COMMAND_NEXT_BACKGROUND,
         next_background_label.as_ptr(),
         next_background_icon,
@@ -349,17 +364,17 @@ unsafe fn show_context_menu(hwnd: HWND, data: &WindowData) {
     }
     if !insert_command_menu_item(
         menu,
-        5,
+        8,
         TRAY_COMMAND_SETTINGS,
         settings_label.as_ptr(),
         settings_icon,
     ) {
         tracing::warn!("failed to add Settings tray menu item");
     }
-    if !insert_separator_menu_item(menu, 6) {
+    if !insert_separator_menu_item(menu, 9) {
         tracing::warn!("failed to add separator tray menu item");
     }
-    if !insert_command_menu_item(menu, 7, TRAY_COMMAND_EXIT, exit_label.as_ptr(), exit_icon) {
+    if !insert_command_menu_item(menu, 10, TRAY_COMMAND_EXIT, exit_label.as_ptr(), exit_icon) {
         tracing::warn!("failed to add Exit tray menu item");
     }
 

@@ -395,8 +395,9 @@ sources = [ {{ type = "directory", path = "{}" }} ]
 
         let raw = default_hcl(&pictures);
         let cfg = parse_from_str(&raw, &tmp.path().join("bgm.hcl")).unwrap();
-        assert_eq!(cfg.timer.as_secs(), 300);
-        assert_eq!(cfg.remote_update_timer.as_secs(), 3600);
+        // `default_hcl` uses explicit template durations (3h / 2h), not parser fallback defaults.
+        assert_eq!(cfg.timer.as_secs(), 10_800);
+        assert_eq!(cfg.remote_update_timer.as_secs(), 7_200);
         assert_eq!(cfg.sources.len(), 1);
 
         match &cfg.sources[0] {
