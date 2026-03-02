@@ -2,7 +2,6 @@ use crate::errors::Result;
 use anyhow::{anyhow, bail, Context};
 use bytemuck::{Pod, Zeroable};
 use std::borrow::Cow;
-use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 use wgpu::util::DeviceExt;
@@ -35,7 +34,7 @@ pub struct WgpuRuntime {
 }
 
 impl WgpuRuntime {
-    pub fn new(window: Arc<Window>, shader_path: &Path, mouse_enabled: bool) -> Result<Self> {
+    pub fn new(window: Arc<Window>, shader_bytes: &[u8], mouse_enabled: bool) -> Result<Self> {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::default());
         let surface = instance
             .create_surface(window.clone())
@@ -88,7 +87,7 @@ impl WgpuRuntime {
         surface.configure(&device, &config);
 
         let (uniform_buffer, bind_group, pipeline) =
-            create_pipeline(&device, &config, shader_path, mouse_enabled)?;
+            create_pipeline(&device, &config, shader_bytes, mouse_enabled)?;
 
         config.width = size.width.max(1);
         config.height = size.height.max(1);
@@ -115,14 +114,6 @@ impl WgpuRuntime {
         self.config.width = new_size.width;
         self.config.height = new_size.height;
         self.surface.configure(&self.device, &self.config);
-    }
-
-    pub fn reload_shader(&mut self, shader_path: &Path) -> Result<()> {
-        let (_, bind_group, pipeline) =
-            create_pipeline(&self.device, &self.config, shader_path, self.mouse_enabled)?;
-        self.bind_group = bind_group;
-        self.pipeline = pipeline;
-        Ok(())
     }
 
     pub fn render(&mut self, mouse: [f32; 2]) -> Result<()> {
@@ -195,10 +186,10 @@ impl WgpuRuntime {
 fn create_pipeline(
     device: &wgpu::Device,
     config: &wgpu::SurfaceConfiguration,
-    shader_path: &Path,
+    shader_bytes: &[u8],
     mouse_enabled: bool,
 ) -> Result<(wgpu::Buffer, wgpu::BindGroup, wgpu::RenderPipeline)> {
-    let shader_words = load_spirv_words(shader_path)?;
+    let shader_words = load_spirv_words(shader_bytes)?;
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("bgm-live-shader"),
         source: wgpu::ShaderSource::SpirV(Cow::Owned(shader_words)),
@@ -282,14 +273,9 @@ fn create_pipeline(
     Ok((uniform_buffer, bind_group, pipeline))
 }
 
-fn load_spirv_words(path: &Path) -> Result<Vec<u32>> {
-    let bytes = std::fs::read(path)
-        .with_context(|| format!("failed to read shader binary {}", path.display()))?;
+fn load_spirv_words(bytes: &[u8]) -> Result<Vec<u32>> {
     if bytes.len() % 4 != 0 {
-        bail!(
-            "shader binary size is not a multiple of 4: {}",
-            path.display()
-        );
+        bail!("embedded shader binary size is not a multiple of 4");
     }
 
     let mut words = Vec::with_capacity(bytes.len() / 4);

@@ -46,10 +46,8 @@ renderer = "image"
 
 # Shader mode options (used when renderer = "shader")
 # [shader]
-# crate_path = "C:/path/to/gradient_shader"
+# name = "gradient_shader"
 # target_fps = 60
-# hot_reload = true
-# reload_debounce_ms = 300
 # mouse_enabled = false
 
 ```
@@ -94,7 +92,7 @@ cargo run --release -- --version
 ### Platform Notes
 
 - Windows: tray and wallpaper update flow are supported.
-- Windows shader mode: requires the `shaders/` toolchain and rust-gpu builder crates in this repository.
+- Windows shader mode: shaders are compiled at build time from `shaders/*` (excluding `shader_builder`) using rust-gpu.
 - Linux/macOS: check/test/build are supported for development; wallpaper apply is currently unsupported at runtime.
 
 ### Default Config Location

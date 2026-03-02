@@ -172,7 +172,6 @@ async fn main() -> Result<()> {
                         RendererEvent::Ready => info!("shader renderer ready"),
                         RendererEvent::Running => info!("shader renderer running"),
                         RendererEvent::Paused => info!("shader renderer paused"),
-                        RendererEvent::Reloaded => info!("shader renderer reloaded"),
                         RendererEvent::Stopped => info!("shader renderer stopped"),
                         RendererEvent::Fatal { message } => {
                             warn!(error = %message, "shader renderer failed, switching to image mode");
@@ -329,30 +328,6 @@ async fn main() -> Result<()> {
                             warn!(error = %error, "failed to persist state after settings reload");
                         }
                         info!("settings reload complete");
-                    }
-                    Some(TrayEvent::ReloadShader) => {
-                        if let Some(renderer) = renderer.as_ref() {
-                            if let Err(error) = renderer.send_command(RendererCommand::ReloadShader) {
-                                warn!(error = %error, "failed to request shader reload");
-                            }
-                        } else if config.renderer == RendererMode::Shader {
-                            if let Some(shader_config) = config.shader.clone() {
-                                match ShaderRenderer::start(shader_config) {
-                                    Ok(mut new_renderer) => {
-                                        renderer_event_rx = new_renderer.take_event_receiver();
-                                        renderer = Some(new_renderer);
-                                        active_mode = ActiveMode::Shader;
-                                        session_stats.set_shader_active(true);
-                                        info!("shader renderer started from tray reload command");
-                                    }
-                                    Err(error) => warn!(error = %error, "failed to start shader renderer from tray reload command"),
-                                }
-                            } else {
-                                warn!("shader reload requested but shader config is missing");
-                            }
-                        } else {
-                            warn!("shader reload requested while renderer mode is set to image");
-                        }
                     }
                     Some(TrayEvent::FallbackToImage) => {
                         if let Some(renderer) = renderer.as_ref() {

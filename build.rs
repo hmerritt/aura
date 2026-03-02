@@ -1,3 +1,5 @@
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -10,6 +12,7 @@ const NEXT_BACKGROUND_ICON_FALLBACK_RESOURCE_ID: u16 = 303;
 const REFRESH_ICON_FALLBACK_RESOURCE_ID: u16 = 304;
 const SETTINGS_ICON_FALLBACK_RESOURCE_ID: u16 = 301;
 const EXIT_ICON_FALLBACK_RESOURCE_ID: u16 = 302;
+const RUSTGPU_TOOLCHAIN: &str = "nightly-2025-08-04";
 
 fn main() {
     println!("cargo:rerun-if-changed=assets/tray.png");
@@ -30,37 +33,216 @@ fn main() {
         return;
     }
 
-    let out_dir = std::path::PathBuf::from(
+    let manifest_dir =
+        PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is required"));
+    let out_dir = PathBuf::from(
         std::env::var("OUT_DIR").expect("OUT_DIR is required for resource generation"),
     );
 
-    let source_png = std::path::Path::new("assets").join("tray.png");
+    compile_precompiled_shaders(&manifest_dir, &out_dir);
+    generate_windows_resources(&manifest_dir, &out_dir);
+}
+
+fn compile_precompiled_shaders(manifest_dir: &Path, out_dir: &Path) {
+    let shaders_dir = manifest_dir.join("shaders");
+    let shader_builder_manifest = shaders_dir.join("shader_builder").join("Cargo.toml");
+    if !shader_builder_manifest.exists() {
+        panic!(
+            "missing shader builder manifest: {}",
+            shader_builder_manifest.display()
+        );
+    }
+
+    emit_rerun_if_changed_recursive(&shaders_dir.join("rust-toolchain.toml"));
+    emit_rerun_if_changed_recursive(&shaders_dir.join("shader_builder"));
+
+    let shader_crates = discover_shader_crates(&shaders_dir);
+    if shader_crates.is_empty() {
+        panic!(
+            "no shader crates found in {}; expected at least one crate besides shader_builder",
+            shaders_dir.display()
+        );
+    }
+
+    let compiled_dir = out_dir.join("precompiled_shaders");
+    fs::create_dir_all(&compiled_dir).unwrap_or_else(|error| {
+        panic!(
+            "failed to create precompiled shader output directory {}: {}",
+            compiled_dir.display(),
+            error
+        )
+    });
+
+    let mut compiled = Vec::with_capacity(shader_crates.len());
+    for (shader_name, shader_crate_dir) in shader_crates {
+        emit_rerun_if_changed_recursive(&shader_crate_dir);
+
+        let output_spv = compiled_dir.join(format!("{shader_name}.spv"));
+        let output = Command::new("rustup")
+            .arg("run")
+            .arg(RUSTGPU_TOOLCHAIN)
+            .arg("cargo")
+            .arg("run")
+            .arg("--release")
+            .arg("--quiet")
+            .arg("--manifest-path")
+            .arg(&shader_builder_manifest)
+            .arg("--")
+            .arg("--shader-crate")
+            .arg(&shader_crate_dir)
+            .arg("--out")
+            .arg(&output_spv)
+            .env_remove("RUSTC")
+            .env_remove("RUSTDOC")
+            .env_remove("RUSTUP_TOOLCHAIN")
+            .current_dir(manifest_dir)
+            .output()
+            .unwrap_or_else(|error| {
+                panic!(
+                    "failed to execute shader build for {}: {}",
+                    shader_name, error
+                )
+            });
+
+        if !output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            panic!(
+                "shader build failed for {}\nstdout:\n{}\nstderr:\n{}",
+                shader_name,
+                stdout.trim(),
+                stderr.trim()
+            );
+        }
+
+        if !output_spv.exists() {
+            panic!(
+                "shader build succeeded but output is missing for {}: {}",
+                shader_name,
+                output_spv.display()
+            );
+        }
+
+        compiled.push((shader_name, output_spv));
+    }
+
+    write_shader_registry(out_dir, &compiled);
+}
+
+fn discover_shader_crates(shaders_dir: &Path) -> Vec<(String, PathBuf)> {
+    let mut shader_crates = Vec::new();
+
+    let entries = fs::read_dir(shaders_dir)
+        .unwrap_or_else(|error| panic!("failed to read {}: {}", shaders_dir.display(), error));
+    for entry in entries {
+        let entry = entry.unwrap_or_else(|error| {
+            panic!(
+                "failed to read an entry from {}: {}",
+                shaders_dir.display(),
+                error
+            )
+        });
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+
+        let shader_name = entry.file_name().to_string_lossy().to_string();
+        if shader_name == "shader_builder" {
+            continue;
+        }
+        if !path.join("Cargo.toml").exists() {
+            continue;
+        }
+
+        shader_crates.push((shader_name, path));
+    }
+
+    shader_crates.sort_by(|a, b| a.0.cmp(&b.0));
+    shader_crates
+}
+
+fn write_shader_registry(out_dir: &Path, compiled: &[(String, PathBuf)]) {
+    let mut source = String::from("&[\n");
+    for (shader_name, shader_path) in compiled {
+        let shader_name_literal = shader_name.replace('"', "\\\"");
+        let shader_path_literal = shader_path
+            .to_string_lossy()
+            .replace('\\', "/")
+            .replace('"', "\\\"");
+        source.push_str(&format!(
+            "    (\"{}\", include_bytes!(\"{}\") as &[u8]),\n",
+            shader_name_literal, shader_path_literal
+        ));
+    }
+    source.push_str("]\n");
+
+    let registry_path = out_dir.join("precompiled_shaders.rs");
+    fs::write(&registry_path, source).unwrap_or_else(|error| {
+        panic!(
+            "failed to write shader registry {}: {}",
+            registry_path.display(),
+            error
+        )
+    });
+}
+
+fn emit_rerun_if_changed_recursive(path: &Path) {
+    if !path.exists() {
+        return;
+    }
+
+    if path.is_file() {
+        println!("cargo:rerun-if-changed={}", path.display());
+        return;
+    }
+
+    if path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| name == "target")
+        .unwrap_or(false)
+    {
+        return;
+    }
+
+    let entries = fs::read_dir(path)
+        .unwrap_or_else(|error| panic!("failed to read {}: {}", path.display(), error));
+    for entry in entries {
+        let entry = entry.unwrap_or_else(|error| {
+            panic!("failed to read an entry from {}: {}", path.display(), error)
+        });
+        emit_rerun_if_changed_recursive(&entry.path());
+    }
+}
+
+fn generate_windows_resources(manifest_dir: &Path, out_dir: &Path) {
+    let source_png = manifest_dir.join("assets").join("tray.png");
     if !source_png.exists() {
         panic!("missing source tray image: {}", source_png.display());
     }
-    let next_background_source_png =
-        std::path::Path::new("assets").join("menu-next-background.png");
+    let next_background_source_png = manifest_dir.join("assets").join("menu-next-background.png");
     if !next_background_source_png.exists() {
         panic!(
             "missing source menu next background image: {}",
             next_background_source_png.display()
         );
     }
-    let refresh_source_png = std::path::Path::new("assets").join("menu-refresh.png");
+    let refresh_source_png = manifest_dir.join("assets").join("menu-refresh.png");
     if !refresh_source_png.exists() {
         panic!(
             "missing source menu refresh image: {}",
             refresh_source_png.display()
         );
     }
-    let settings_source_png = std::path::Path::new("assets").join("menu-settings.png");
+    let settings_source_png = manifest_dir.join("assets").join("menu-settings.png");
     if !settings_source_png.exists() {
         panic!(
             "missing source menu settings image: {}",
             settings_source_png.display()
         );
     }
-    let exit_source_png = std::path::Path::new("assets").join("menu-exit.png");
+    let exit_source_png = manifest_dir.join("assets").join("menu-exit.png");
     if !exit_source_png.exists() {
         panic!(
             "missing source menu exit image: {}",
@@ -122,7 +304,7 @@ fn main() {
         EXIT_ICON_FALLBACK_RESOURCE_ID,
         exit_ico_path_for_rc
     );
-    std::fs::write(&generated_rc, rc_payload).expect("failed to write generated rc file");
+    fs::write(&generated_rc, rc_payload).expect("failed to write generated rc file");
 
     let generated_rc_str = generated_rc
         .to_str()
@@ -130,7 +312,7 @@ fn main() {
     let _ = embed_resource::compile(generated_rc_str, embed_resource::NONE);
 }
 
-fn generate_multi_size_ico(source_png: &std::path::Path, output_ico: &std::path::Path) {
+fn generate_multi_size_ico(source_png: &Path, output_ico: &Path) {
     let source = image::open(source_png)
         .unwrap_or_else(|e| panic!("failed to load {}: {}", source_png.display(), e))
         .to_rgba8();
@@ -147,14 +329,14 @@ fn generate_multi_size_ico(source_png: &std::path::Path, output_ico: &std::path:
         icon_dir.add_entry(entry);
     }
 
-    let mut file = std::fs::File::create(output_ico)
+    let mut file = fs::File::create(output_ico)
         .unwrap_or_else(|e| panic!("failed to create {}: {}", output_ico.display(), e));
     icon_dir
         .write(&mut file)
         .unwrap_or_else(|e| panic!("failed to write {}: {}", output_ico.display(), e));
 }
 
-fn generate_menu_bitmap(source_png: &std::path::Path, output_bmp: &std::path::Path) {
+fn generate_menu_bitmap(source_png: &Path, output_bmp: &Path) {
     let source = image::open(source_png)
         .unwrap_or_else(|e| panic!("failed to load {}: {}", source_png.display(), e))
         .to_rgba8();
@@ -164,7 +346,7 @@ fn generate_menu_bitmap(source_png: &std::path::Path, output_bmp: &std::path::Pa
         .unwrap_or_else(|e| panic!("failed to write {}: {}", output_bmp.display(), e));
 }
 
-fn generate_menu_icon(source_png: &std::path::Path, output_ico: &std::path::Path) {
+fn generate_menu_icon(source_png: &Path, output_ico: &Path) {
     let source = image::open(source_png)
         .unwrap_or_else(|e| panic!("failed to load {}: {}", source_png.display(), e))
         .to_rgba8();
@@ -176,7 +358,7 @@ fn generate_menu_icon(source_png: &std::path::Path, output_ico: &std::path::Path
         .unwrap_or_else(|e| panic!("failed to encode 16x16 icon entry: {}", e));
     icon_dir.add_entry(entry);
 
-    let mut file = std::fs::File::create(output_ico)
+    let mut file = fs::File::create(output_ico)
         .unwrap_or_else(|e| panic!("failed to create {}: {}", output_ico.display(), e));
     icon_dir
         .write(&mut file)

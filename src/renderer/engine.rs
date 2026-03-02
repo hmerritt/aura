@@ -1,18 +1,14 @@
-use super::compiler::{compile_shader, CompileOptions};
 use super::desktop_windows::{
     attach_window_to_desktop, place_window_over_virtual_desktop, show_desktop_window,
     virtual_cursor_position,
 };
-use super::watcher::start_shader_watcher;
+use super::precompiled;
 use super::wgpu_runtime::WgpuRuntime;
 use super::{RendererCommand, RendererEvent};
 use crate::config::ShaderConfig;
 use crate::errors::Result;
 use anyhow::{anyhow, bail, Context};
-use notify::RecommendedWatcher;
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-use std::path::PathBuf;
-use std::sync::mpsc::Receiver;
 use std::sync::Arc;
 use std::thread;
 use std::thread::JoinHandle;
@@ -22,6 +18,7 @@ use windows_sys::Win32::Foundation::HWND;
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
+use winit::platform::windows::EventLoopBuilderExtWindows;
 use winit::window::Window;
 
 pub struct ShaderRenderer {
@@ -32,20 +29,23 @@ pub struct ShaderRenderer {
 
 impl ShaderRenderer {
     pub fn start(config: ShaderConfig) -> Result<Self> {
-        let compile_options = CompileOptions {
-            shader_crate: config.crate_path.clone(),
-            output_spv: shader_output_path()?,
-        };
-        compile_shader(&compile_options).context("initial shader compile failed")?;
+        let shader_name = config.name.clone();
+        let shader_bytes = precompiled::shader_bytes(&shader_name).ok_or_else(|| {
+            let available = precompiled::shader_names();
+            anyhow!(
+                "configured shader \"{}\" is not available; precompiled shaders: {}",
+                shader_name,
+                available.join(", ")
+            )
+        })?;
 
         let (event_tx, event_rx) = mpsc::unbounded_channel::<RendererEvent>();
         let (init_tx, init_rx) = std::sync::mpsc::channel::<Result<EventLoopProxy<UserEvent>>>();
         let thread_config = config.clone();
-        let compile_options_for_thread = compile_options.clone();
         let join_handle = thread::Builder::new()
             .name("bgm-shader-renderer".to_string())
             .spawn(move || {
-                run_renderer_thread(thread_config, compile_options_for_thread, event_tx, init_tx);
+                run_renderer_thread(thread_config, shader_bytes, event_tx, init_tx);
             })
             .context("failed to spawn shader renderer thread")?;
 
@@ -66,7 +66,6 @@ impl ShaderRenderer {
 
     pub fn send_command(&self, command: RendererCommand) -> Result<()> {
         let user_event = match command {
-            RendererCommand::ReloadShader => UserEvent::ReloadRequested,
             RendererCommand::DisableOutput => UserEvent::DisableOutput,
             RendererCommand::Stop => UserEvent::Stop,
         };
@@ -92,19 +91,20 @@ impl Drop for ShaderRenderer {
 
 #[derive(Debug, Clone)]
 enum UserEvent {
-    ReloadRequested,
-    CompileFinished(std::result::Result<(), String>),
     DisableOutput,
     Stop,
 }
 
 fn run_renderer_thread(
     config: ShaderConfig,
-    compile_options: CompileOptions,
+    shader_bytes: &'static [u8],
     event_tx: UnboundedSender<RendererEvent>,
     init_tx: std::sync::mpsc::Sender<Result<EventLoopProxy<UserEvent>>>,
 ) {
-    let event_loop = match EventLoop::<UserEvent>::with_user_event().build() {
+    let mut builder = EventLoop::<UserEvent>::with_user_event();
+    // The shader renderer runs on a dedicated thread, so we must opt in to any-thread mode.
+    builder.with_any_thread(true);
+    let event_loop = match builder.build() {
         Ok(loop_handle) => loop_handle,
         Err(error) => {
             let _ = init_tx.send(Err(anyhow!("failed to create event loop: {error}")));
@@ -114,7 +114,7 @@ fn run_renderer_thread(
     let proxy = event_loop.create_proxy();
     let _ = init_tx.send(Ok(proxy.clone()));
 
-    let mut app = RendererApp::new(config, compile_options, event_tx, proxy);
+    let mut app = RendererApp::new(config, shader_bytes, event_tx);
     if let Err(error) = event_loop.run_app(&mut app) {
         app.emit_fatal(format!("renderer loop failed: {error}"));
     }
@@ -123,101 +123,37 @@ fn run_renderer_thread(
 
 struct RendererApp {
     config: ShaderConfig,
-    compile_options: CompileOptions,
-    proxy: EventLoopProxy<UserEvent>,
     event_tx: UnboundedSender<RendererEvent>,
     window: Option<Arc<Window>>,
     runtime: Option<WgpuRuntime>,
     paused: bool,
     enabled: bool,
-    compiling: bool,
-    pending_reload: bool,
     next_frame_at: Instant,
     frame_interval: Duration,
-    reload_deadline: Option<Instant>,
-    watcher: Option<RecommendedWatcher>,
-    watcher_rx: Option<Receiver<()>>,
+    shader_bytes: &'static [u8],
 }
 
 impl RendererApp {
     fn new(
         config: ShaderConfig,
-        compile_options: CompileOptions,
+        shader_bytes: &'static [u8],
         event_tx: UnboundedSender<RendererEvent>,
-        proxy: EventLoopProxy<UserEvent>,
     ) -> Self {
         Self {
             frame_interval: Duration::from_secs_f64(1.0 / f64::from(config.target_fps)),
             config,
-            compile_options,
-            proxy,
             event_tx,
             window: None,
             runtime: None,
             paused: false,
             enabled: true,
-            compiling: false,
-            pending_reload: false,
             next_frame_at: Instant::now(),
-            reload_deadline: None,
-            watcher: None,
-            watcher_rx: None,
+            shader_bytes,
         }
     }
 
     fn emit_fatal(&self, message: String) {
         let _ = self.event_tx.send(RendererEvent::Fatal { message });
-    }
-
-    fn request_compile(&mut self) {
-        if self.compiling {
-            self.pending_reload = true;
-            return;
-        }
-        self.compiling = true;
-        let options = self.compile_options.clone();
-        let proxy = self.proxy.clone();
-        thread::spawn(move || {
-            let result = compile_shader(&options).map_err(|error| error.to_string());
-            let _ = proxy.send_event(UserEvent::CompileFinished(result.map(|_| ())));
-        });
-    }
-
-    fn handle_compile_finished(&mut self, result: std::result::Result<(), String>) {
-        self.compiling = false;
-        match result {
-            Ok(()) => {
-                if let Some(runtime) = self.runtime.as_mut() {
-                    if let Err(error) = runtime.reload_shader(&self.compile_options.output_spv) {
-                        self.enabled = false;
-                        self.paused = true;
-                        if let Some(window) = &self.window {
-                            if let Ok(hwnd) = window_hwnd(window.as_ref()) {
-                                show_desktop_window(hwnd, false);
-                            }
-                        }
-                        self.emit_fatal(format!("shader reload failed: {error}"));
-                        return;
-                    }
-                }
-                let _ = self.event_tx.send(RendererEvent::Reloaded);
-            }
-            Err(error) => {
-                self.enabled = false;
-                self.paused = true;
-                if let Some(window) = &self.window {
-                    if let Ok(hwnd) = window_hwnd(window.as_ref()) {
-                        show_desktop_window(hwnd, false);
-                    }
-                }
-                self.emit_fatal(error);
-            }
-        }
-
-        if self.pending_reload {
-            self.pending_reload = false;
-            self.request_compile();
-        }
     }
 }
 
@@ -264,32 +200,15 @@ impl ApplicationHandler<UserEvent> for RendererApp {
         }
         show_desktop_window(hwnd, true);
 
-        let runtime = match WgpuRuntime::new(
-            window.clone(),
-            &self.compile_options.output_spv,
-            self.config.mouse_enabled,
-        ) {
-            Ok(runtime) => runtime,
-            Err(error) => {
-                self.emit_fatal(format!("failed to initialize GPU runtime: {error}"));
-                event_loop.exit();
-                return;
-            }
-        };
-
-        if self.config.hot_reload {
-            match start_shader_watcher(&self.config.crate_path) {
-                Ok((watcher, rx)) => {
-                    self.watcher = Some(watcher);
-                    self.watcher_rx = Some(rx);
-                }
+        let runtime =
+            match WgpuRuntime::new(window.clone(), self.shader_bytes, self.config.mouse_enabled) {
+                Ok(runtime) => runtime,
                 Err(error) => {
-                    self.emit_fatal(format!("failed to start shader watcher: {error}"));
+                    self.emit_fatal(format!("failed to initialize GPU runtime: {error}"));
                     event_loop.exit();
                     return;
                 }
-            }
-        }
+            };
 
         self.window = Some(window);
         self.runtime = Some(runtime);
@@ -341,8 +260,6 @@ impl ApplicationHandler<UserEvent> for RendererApp {
 
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: UserEvent) {
         match event {
-            UserEvent::ReloadRequested => self.request_compile(),
-            UserEvent::CompileFinished(result) => self.handle_compile_finished(result),
             UserEvent::DisableOutput => {
                 self.enabled = false;
                 self.paused = true;
@@ -360,23 +277,6 @@ impl ApplicationHandler<UserEvent> for RendererApp {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        if let Some(rx) = self.watcher_rx.as_ref() {
-            let mut touched = false;
-            while rx.try_recv().is_ok() {
-                touched = true;
-            }
-            if touched {
-                self.reload_deadline = Some(Instant::now() + self.config.reload_debounce);
-            }
-        }
-
-        if let Some(deadline) = self.reload_deadline {
-            if Instant::now() >= deadline {
-                self.reload_deadline = None;
-                self.request_compile();
-            }
-        }
-
         if self.paused || !self.enabled {
             event_loop.set_control_flow(ControlFlow::Wait);
             return;
@@ -409,14 +309,4 @@ fn window_hwnd(window: &Window) -> Result<HWND> {
         }
         _ => bail!("unsupported raw window handle type for Windows renderer"),
     }
-}
-
-fn shader_output_path() -> Result<PathBuf> {
-    let base = dirs::data_local_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("bgm")
-        .join("shaders");
-    std::fs::create_dir_all(&base)
-        .with_context(|| format!("failed to create shader cache dir {}", base.display()))?;
-    Ok(base.join("live.spv"))
 }

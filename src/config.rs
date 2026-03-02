@@ -11,8 +11,7 @@ const MIN_TIMER_SECS: u64 = 5;
 const MIN_REMOTE_UPDATE_SECS: u64 = 30;
 const DEFAULT_JPEG_QUALITY: u8 = 90;
 const DEFAULT_SHADER_TARGET_FPS: u16 = 60;
-const DEFAULT_SHADER_RELOAD_DEBOUNCE_MS: u64 = 300;
-const MIN_SHADER_RELOAD_DEBOUNCE_MS: u64 = 50;
+const DEFAULT_SHADER_NAME: &str = "gradient_shader";
 const DEFAULT_MAX_CACHE_MB: u64 = 1024;
 const DEFAULT_MAX_CACHE_AGE_DAYS: u64 = 30;
 
@@ -41,11 +40,15 @@ pub enum RendererMode {
 
 #[derive(Debug, Clone, Deserialize)]
 struct RawShaderConfig {
-    crate_path: Option<PathBuf>,
+    name: Option<String>,
     target_fps: Option<u16>,
-    hot_reload: Option<bool>,
-    reload_debounce_ms: Option<u64>,
     mouse_enabled: Option<bool>,
+    #[serde(rename = "crate_path")]
+    _crate_path: Option<PathBuf>,
+    #[serde(rename = "hot_reload")]
+    _hot_reload: Option<bool>,
+    #[serde(rename = "reload_debounce_ms")]
+    _reload_debounce_ms: Option<u64>,
 }
 
 fn default_recursive() -> bool {
@@ -130,10 +133,8 @@ pub struct BgmConfig {
 
 #[derive(Debug, Clone)]
 pub struct ShaderConfig {
-    pub crate_path: PathBuf,
+    pub name: String,
     pub target_fps: u16,
-    pub hot_reload: bool,
-    pub reload_debounce: Duration,
     pub mouse_enabled: bool,
 }
 
@@ -179,10 +180,8 @@ renderer = "image"
 
 # Shader mode options (used when renderer = "shader")
 #shader = {{
-#	crate_path = "shaders/gradient_shader"
+#	name = "gradient_shader"
 #	target_fps = 60
-#	hot_reload = true
-#	reload_debounce_ms = 300
 #	mouse_enabled = false
 #}}
 "#,
@@ -240,7 +239,7 @@ impl BgmConfig {
             raw.max_cache_age_days.unwrap_or(DEFAULT_MAX_CACHE_AGE_DAYS) * 24 * 60 * 60,
         );
         let renderer = raw.renderer.unwrap_or(RendererMode::Image);
-        let shader = parse_shader_config(raw.shader, renderer, config_parent)?;
+        let shader = parse_shader_config(raw.shader, renderer)?;
 
         Ok(Self {
             timer: Duration::from_secs(timer_secs),
@@ -262,59 +261,36 @@ impl BgmConfig {
 fn parse_shader_config(
     raw: Option<RawShaderConfig>,
     renderer: RendererMode,
-    config_parent: &Path,
 ) -> Result<Option<ShaderConfig>> {
     let Some(raw) = raw else {
         if renderer == RendererMode::Shader {
-            let crate_path = resolve_path(PathBuf::from("shaders/gradient_shader"), config_parent);
-            if !crate_path.exists() || !crate_path.is_dir() {
-                bail!(
-                    "shader crate path does not exist or is not a directory: {}",
-                    crate_path.display()
-                );
-            }
             return Ok(Some(ShaderConfig {
-                crate_path,
+                name: DEFAULT_SHADER_NAME.to_string(),
                 target_fps: DEFAULT_SHADER_TARGET_FPS,
-                hot_reload: true,
-                reload_debounce: Duration::from_millis(DEFAULT_SHADER_RELOAD_DEBOUNCE_MS),
                 mouse_enabled: false,
             }));
         }
         return Ok(None);
     };
 
-    let crate_path = resolve_path(
-        raw.crate_path
-            .unwrap_or_else(|| PathBuf::from("shaders/gradient_shader")),
-        config_parent,
-    );
-    if renderer == RendererMode::Shader && (!crate_path.exists() || !crate_path.is_dir()) {
-        bail!(
-            "shader crate path does not exist or is not a directory: {}",
-            crate_path.display()
-        );
-    }
-
     let target_fps = raw.target_fps.unwrap_or(DEFAULT_SHADER_TARGET_FPS);
     if target_fps == 0 || target_fps > 240 {
         bail!("shader.target_fps must be between 1 and 240");
     }
 
-    let reload_debounce_ms = raw
-        .reload_debounce_ms
-        .unwrap_or(DEFAULT_SHADER_RELOAD_DEBOUNCE_MS);
-    if reload_debounce_ms < MIN_SHADER_RELOAD_DEBOUNCE_MS {
-        bail!(
-            "shader.reload_debounce_ms must be at least {MIN_SHADER_RELOAD_DEBOUNCE_MS} milliseconds"
-        );
+    let name = raw
+        .name
+        .as_deref()
+        .unwrap_or(DEFAULT_SHADER_NAME)
+        .trim()
+        .to_string();
+    if name.is_empty() {
+        bail!("shader.name must not be empty");
     }
 
     Ok(Some(ShaderConfig {
-        crate_path,
+        name,
         target_fps,
-        hot_reload: raw.hot_reload.unwrap_or(true),
-        reload_debounce: Duration::from_millis(reload_debounce_ms),
         mouse_enabled: raw.mouse_enabled.unwrap_or(false),
     }))
 }
@@ -498,7 +474,7 @@ sources = [ {{ type = "directory", path = "{}" }} ]
         fs::create_dir_all(&pictures).unwrap();
 
         let raw = default_hcl(&pictures);
-        assert!(raw.contains("crate_path = \"shaders/gradient_shader\""));
+        assert!(raw.contains("name = \"gradient_shader\""));
         let cfg = parse_from_str(&raw, &tmp.path().join("bgm.hcl")).unwrap();
         // `default_hcl` uses explicit template durations (3h / 2h), not parser fallback defaults.
         assert_eq!(cfg.timer.as_secs(), 10_800);
@@ -514,6 +490,35 @@ sources = [ {{ type = "directory", path = "{}" }} ]
             }
             _ => panic!("expected directory source in generated config"),
         }
+    }
+
+    #[test]
+    fn deprecated_shader_fields_are_ignored() {
+        let tmp = tempdir().unwrap();
+        let dir = tmp.path().join("imgs");
+        fs::create_dir_all(&dir).unwrap();
+
+        let raw = format!(
+            r#"
+renderer = "shader"
+sources = [ {{ type = "directory", path = "{}" }} ]
+shader = {{
+  name = "gradient_shader"
+  crate_path = "shaders/legacy"
+  hot_reload = true
+  reload_debounce_ms = 500
+  target_fps = 75
+  mouse_enabled = true
+}}
+"#,
+            hcl_path(&dir)
+        );
+
+        let cfg = parse_from_str(&raw, &tmp.path().join("bgm.hcl")).unwrap();
+        let shader = cfg.shader.expect("shader config should exist");
+        assert_eq!(shader.name, "gradient_shader");
+        assert_eq!(shader.target_fps, 75);
+        assert!(shader.mouse_enabled);
     }
 
     #[test]

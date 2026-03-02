@@ -1,6 +1,5 @@
 #[derive(Debug, Clone)]
 pub enum RendererCommand {
-    ReloadShader,
     DisableOutput,
     Stop,
 }
@@ -10,19 +9,16 @@ pub enum RendererEvent {
     Ready,
     Running,
     Paused,
-    Reloaded,
     Fatal { message: String },
     Stopped,
 }
 
 #[cfg(windows)]
-mod compiler;
-#[cfg(windows)]
 mod desktop_windows;
 #[cfg(windows)]
 mod engine;
 #[cfg(windows)]
-mod watcher;
+mod precompiled;
 #[cfg(windows)]
 mod wgpu_runtime;
 
