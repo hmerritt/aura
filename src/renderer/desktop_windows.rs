@@ -1,7 +1,7 @@
 use crate::errors::Result;
 use anyhow::{bail, Context};
 use std::ptr;
-use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM, POINT};
+use windows_sys::Win32::Foundation::{GetLastError, SetLastError, BOOL, HWND, LPARAM, POINT};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     EnumWindows, FindWindowExW, FindWindowW, GetCursorPos, GetSystemMetrics, SendMessageTimeoutW,
     SetParent, SetWindowPos, ShowWindow, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN,
@@ -20,11 +20,19 @@ pub fn attach_window_to_desktop(hwnd: HWND) -> Result<()> {
     unsafe {
         let progman = find_window("Progman", None)?;
         spawn_workerw(progman);
-        let workerw = find_workerw().context("failed to find WorkerW host window")?;
-        let parent = SetParent(hwnd, workerw);
-        if parent.is_null() {
-            bail!("SetParent failed for desktop render window");
+        let host = find_desktop_host(progman).context("failed to resolve desktop host window")?;
+        if host.kind != DesktopHostKind::WorkerW {
+            tracing::warn!(
+                host = host.kind.as_str(),
+                "WorkerW host unavailable; using fallback desktop host"
+            );
         }
+        set_parent_checked(hwnd, host.hwnd).with_context(|| {
+            format!(
+                "SetParent failed for desktop render window (host={})",
+                host.kind.as_str()
+            )
+        })?;
     }
     Ok(())
 }
@@ -96,17 +104,73 @@ unsafe fn find_window(class_name: &str, window_name: Option<&str>) -> Result<HWN
     Ok(hwnd)
 }
 
-unsafe fn find_workerw() -> Option<HWND> {
-    let mut workerw: HWND = ptr::null_mut();
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DesktopHostKind {
+    WorkerW,
+    ShellHost,
+    ProgmanFallback,
+}
+
+impl DesktopHostKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::WorkerW => "workerw",
+            Self::ShellHost => "shell_host",
+            Self::ProgmanFallback => "progman_fallback",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct DesktopHost {
+    hwnd: HWND,
+    kind: DesktopHostKind,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct EnumHostCandidates {
+    workerw: HWND,
+    shell_host: HWND,
+}
+
+impl Default for EnumHostCandidates {
+    fn default() -> Self {
+        Self {
+            workerw: ptr::null_mut(),
+            shell_host: ptr::null_mut(),
+        }
+    }
+}
+
+unsafe fn find_desktop_host(progman: HWND) -> Option<DesktopHost> {
+    let mut candidates = EnumHostCandidates::default();
     let _ = EnumWindows(
         Some(enum_windows_cb),
-        (&mut workerw as *mut HWND).cast::<core::ffi::c_void>() as LPARAM,
+        (&mut candidates as *mut EnumHostCandidates).cast::<core::ffi::c_void>() as LPARAM,
     );
-    if workerw.is_null() {
-        None
-    } else {
-        Some(workerw)
+    choose_desktop_host(candidates, progman)
+}
+
+fn choose_desktop_host(candidates: EnumHostCandidates, progman: HWND) -> Option<DesktopHost> {
+    if !candidates.workerw.is_null() {
+        return Some(DesktopHost {
+            hwnd: candidates.workerw,
+            kind: DesktopHostKind::WorkerW,
+        });
     }
+    if !candidates.shell_host.is_null() {
+        return Some(DesktopHost {
+            hwnd: candidates.shell_host,
+            kind: DesktopHostKind::ShellHost,
+        });
+    }
+    if !progman.is_null() {
+        return Some(DesktopHost {
+            hwnd: progman,
+            kind: DesktopHostKind::ProgmanFallback,
+        });
+    }
+    None
 }
 
 unsafe extern "system" fn enum_windows_cb(hwnd: HWND, lparam: LPARAM) -> BOOL {
@@ -116,12 +180,16 @@ unsafe extern "system" fn enum_windows_cb(hwnd: HWND, lparam: LPARAM) -> BOOL {
         return 1;
     }
 
+    let out = lparam as *mut EnumHostCandidates;
+    if !out.is_null() && (*out).shell_host.is_null() {
+        (*out).shell_host = hwnd;
+    }
+
     let worker_class = wide_null("WorkerW");
     let worker = FindWindowExW(ptr::null_mut(), hwnd, worker_class.as_ptr(), ptr::null());
     if !worker.is_null() {
-        let out = lparam as *mut HWND;
         if !out.is_null() {
-            *out = worker;
+            (*out).workerw = worker;
         }
         return 0;
     }
@@ -129,6 +197,70 @@ unsafe extern "system" fn enum_windows_cb(hwnd: HWND, lparam: LPARAM) -> BOOL {
     1
 }
 
+unsafe fn set_parent_checked(hwnd: HWND, parent: HWND) -> Result<()> {
+    SetLastError(0);
+    let previous_parent = SetParent(hwnd, parent);
+    if previous_parent.is_null() {
+        let last_error = GetLastError();
+        if last_error != 0 {
+            bail!("SetParent returned null (win32={last_error})");
+        }
+    }
+    Ok(())
+}
+
 fn wide_null(value: &str) -> Vec<u16> {
     value.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fake_hwnd(value: isize) -> HWND {
+        value as HWND
+    }
+
+    #[test]
+    fn chooses_workerw_when_available() {
+        let candidates = EnumHostCandidates {
+            workerw: fake_hwnd(11),
+            shell_host: fake_hwnd(22),
+        };
+        let host = choose_desktop_host(candidates, fake_hwnd(33)).expect("host should exist");
+        assert_eq!(host.kind, DesktopHostKind::WorkerW);
+        assert_eq!(host.hwnd, fake_hwnd(11));
+    }
+
+    #[test]
+    fn falls_back_to_shell_host_when_workerw_missing() {
+        let candidates = EnumHostCandidates {
+            workerw: ptr::null_mut(),
+            shell_host: fake_hwnd(22),
+        };
+        let host = choose_desktop_host(candidates, fake_hwnd(33)).expect("host should exist");
+        assert_eq!(host.kind, DesktopHostKind::ShellHost);
+        assert_eq!(host.hwnd, fake_hwnd(22));
+    }
+
+    #[test]
+    fn falls_back_to_progman_when_no_enum_candidates() {
+        let candidates = EnumHostCandidates {
+            workerw: ptr::null_mut(),
+            shell_host: ptr::null_mut(),
+        };
+        let host = choose_desktop_host(candidates, fake_hwnd(33)).expect("host should exist");
+        assert_eq!(host.kind, DesktopHostKind::ProgmanFallback);
+        assert_eq!(host.hwnd, fake_hwnd(33));
+    }
+
+    #[test]
+    fn returns_none_when_all_hosts_missing() {
+        let candidates = EnumHostCandidates {
+            workerw: ptr::null_mut(),
+            shell_host: ptr::null_mut(),
+        };
+        let host = choose_desktop_host(candidates, ptr::null_mut());
+        assert!(host.is_none());
+    }
 }
