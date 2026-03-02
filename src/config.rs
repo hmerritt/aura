@@ -248,13 +248,13 @@ log_level = "warn"
 renderer = "image"
 
 # Shader mode options (used when renderer = "shader")
-#shader = {{
-#	name = "gradient_glossy" # "gradient_glossy" | "limestone_cave" | "dither_asci_1" | "dither_asci_2"
-#	target_fps = 50
-#	mouse_enabled = false
-#	quality = "medium" # "vlow" | "low" | "medium" | "high"
-#	desktop_scope = "virtual" # "virtual" | "primary"
-#}}
+shader = {{
+	name = "gradient_glossy" # "gradient_glossy" | "limestone_cave" | "dither_asci_1" | "dither_asci_2"
+	target_fps = 50
+	mouse_enabled = false
+	quality = "low" # "vlow" | "low" | "medium" | "high"
+	desktop_scope = "virtual" # "virtual" | "primary"
+}}
 "#,
         pictures
     )

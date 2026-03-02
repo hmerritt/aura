@@ -46,13 +46,13 @@ log_level = "info"
 renderer = "image"
 
 # Shader mode options (used when renderer = "shader")
-#shader = {{
-#	name = "gradient_glossy" # "gradient_glossy" | "limestone_cave" | "dither_asci_1" | "dither_asci_2"
-#	target_fps = 50
-#	mouse_enabled = false
-#	quality = "medium" # "vlow" | "low" | "medium" | "high"
-#	desktop_scope = "virtual" # "virtual" | "primary"
-#}}
+shader = {{
+	name = "gradient_glossy" # "gradient_glossy" | "limestone_cave" | "dither_asci_1" | "dither_asci_2"
+	target_fps = 50
+	mouse_enabled = false
+	quality = "medium" # "vlow" | "low" | "medium" | "high"
+	desktop_scope = "virtual" # "virtual" | "primary"
+}}
 ```
 
 ## Development
@@ -110,7 +110,9 @@ cargo run --release -- --version
 - Forces Windows wallpaper style to `Fill` on apply
 - Windows tray icon (enabled by default)
     - Double-click tray icon: switch to next wallpaper immediately in image mode (no-op in shader mode)
-    - Right-click tray icon: shows stats (`Timer`, `Remote Update`, `Images`, `Shown`, `Skipped`, `Running`) and control menu items
+    - Right-click tray icon: shows stats and control menu items
+    - In image mode, stats are `Timer`, `Remote Update`, `Images`, `Shown`, `Skipped`, and `Running`
+    - In shader mode, only `Running` is shown in stats
     - `Images` counts unique merged candidates across all sources, and `Shown` counts images applied in the current session
     - In image mode: `Next Background`, `Reload Settings`, `Settings`, `Exit`
     - In shader mode: `Reload Settings`, `Settings`, `Exit`
