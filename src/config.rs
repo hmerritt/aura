@@ -554,7 +554,7 @@ sources = [ {{ type = "directory", path = "{}" }} ]
 
         let raw = default_hcl(&pictures);
         assert!(raw.contains("name = \"gradient_glossy\""));
-        assert!(raw.contains("quality = \"medium\""));
+        assert!(raw.contains("quality = \"low\""));
         let cfg = parse_from_str(&raw, &tmp.path().join("aura.hcl")).unwrap();
         // `default_hcl` uses explicit template durations (3h / 2h), not parser fallback defaults.
         assert_eq!(cfg.timer.as_secs(), 10_800);
