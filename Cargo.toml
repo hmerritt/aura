@@ -1,6 +1,6 @@
 [package]
 name = "bgm"
-version = "0.3.10"
+version = "0.3.11"
 edition = "2021"
 
 [dependencies]
@@ -10,20 +10,46 @@ blake3 = "1.5"
 dirs = "5.0"
 feed-rs = "2.3"
 hcl = { package = "hcl-rs", version = "0.18" }
-image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "bmp", "webp"] }
+image = { version = "0.25", default-features = false, features = [
+    "jpeg",
+    "png",
+    "gif",
+    "bmp",
+    "webp",
+] }
 rand = { version = "0.8", features = ["small_rng"] }
 regex = "1.10"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "gzip", "brotli", "deflate"] }
+reqwest = { version = "0.12", default-features = false, features = [
+    "rustls-tls",
+    "gzip",
+    "brotli",
+    "deflate",
+] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-tokio = { version = "1.44", features = ["fs", "macros", "rt-multi-thread", "signal", "time"] }
+tokio = { version = "1.44", features = [
+    "fs",
+    "macros",
+    "rt-multi-thread",
+    "signal",
+    "time",
+] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 url = "2.5"
 walkdir = "2.5"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging", "Win32_UI_Shell", "Win32_System_Registry", "Win32_System_Threading", "Win32_System_LibraryLoader", "Win32_Security"] }
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Shell",
+    "Win32_System_Registry",
+    "Win32_System_Threading",
+    "Win32_System_LibraryLoader",
+    "Win32_Security",
+] }
 
 [dev-dependencies]
 tempfile = "3.14"
@@ -32,3 +58,8 @@ tempfile = "3.14"
 embed-resource = "3.0"
 ico = "0.4"
 image = { version = "0.25", default-features = false, features = ["png"] }
+
+[profile.release]
+strip = true    # Automatically strip symbols from the binary.
+opt-level = "z" # Optimize for size.
+lto = true
