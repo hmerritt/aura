@@ -10,25 +10,42 @@ use std::time::Duration;
 use tokio::sync::mpsc::UnboundedSender;
 use windows_sys::Win32::Foundation::{
     CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, HANDLE, HINSTANCE, HWND, LPARAM, LRESULT,
-    WPARAM,
+    POINT, WPARAM,
 };
-use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows_sys::Win32::Graphics::Gdi::{
+    CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, SelectObject, BITMAPINFO,
+    BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, HBITMAP, HGDIOBJ,
+};
+use windows_sys::Win32::System::LibraryLoader::{FindResourceW, GetModuleHandleW};
 use windows_sys::Win32::System::Threading::CreateMutexW;
 use windows_sys::Win32::UI::Shell::{
     ShellExecuteW, Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE,
     NOTIFYICONDATAW,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetWindowLongPtrW, LoadIconW,
-    LoadImageW, PeekMessageW, RegisterClassW, SetWindowLongPtrW, TranslateMessage, GWLP_USERDATA,
-    HICON, IDI_APPLICATION, IMAGE_ICON, LR_DEFAULTSIZE, LR_SHARED, MSG, PM_REMOVE, SW_SHOWNORMAL,
-    WM_APP, WM_LBUTTONDBLCLK, WM_NCCREATE, WM_NCDESTROY, WM_RBUTTONUP, WNDCLASSW, WS_EX_NOACTIVATE,
+    CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow, DispatchMessageW,
+    DrawIconEx, GetCursorPos, GetWindowLongPtrW, InsertMenuItemW, LoadIconW, LoadImageW,
+    PeekMessageW, PostMessageW, RegisterClassW, SetForegroundWindow, SetWindowLongPtrW,
+    TrackPopupMenu, TranslateMessage, DI_NORMAL, GWLP_USERDATA, HICON, IDI_APPLICATION,
+    IMAGE_BITMAP, IMAGE_ICON, LR_CREATEDIBSECTION, LR_DEFAULTSIZE, LR_SHARED, MENUITEMINFOW,
+    MFT_SEPARATOR, MFT_STRING, MIIM_BITMAP, MIIM_FTYPE, MIIM_ID, MIIM_STRING, MSG, PM_REMOVE,
+    SW_SHOWNORMAL, TPM_LEFTALIGN, TPM_RETURNCMD, TPM_RIGHTBUTTON, WM_APP, WM_LBUTTONDBLCLK,
+    WM_NCCREATE, WM_NCDESTROY, WM_NULL, WM_RBUTTONUP, WNDCLASSW, WS_EX_NOACTIVATE,
 };
 
 const TRAY_ICON_ID: u32 = 1;
 const WM_TRAYICON: u32 = WM_APP + 1;
 const SINGLE_INSTANCE_MUTEX_NAME: &str = "Local\\bgm-tray-single-instance";
 const TRAY_ICON_RESOURCE_ID: u16 = 101;
+const SETTINGS_ICON_RESOURCE_ID: u16 = 201;
+const EXIT_ICON_RESOURCE_ID: u16 = 202;
+const SETTINGS_ICON_FALLBACK_RESOURCE_ID: u16 = 301;
+const EXIT_ICON_FALLBACK_RESOURCE_ID: u16 = 302;
+const TRAY_COMMAND_SETTINGS: u32 = 1001;
+const TRAY_COMMAND_EXIT: u32 = 1002;
+const MENU_ICON_SIZE: i32 = 16;
+const RT_BITMAP_RESOURCE_TYPE: u16 = 2;
+const RT_GROUP_ICON_RESOURCE_TYPE: u16 = 14;
 
 pub struct SingleInstanceGuard {
     handle: HANDLE,
@@ -100,6 +117,7 @@ pub fn spawn(config_path: PathBuf, event_tx: UnboundedSender<TrayEvent>) -> Resu
 struct WindowData {
     event_tx: UnboundedSender<TrayEvent>,
     config_path_wide: Vec<u16>,
+    hinstance: HINSTANCE,
 }
 
 fn run_tray_loop(
@@ -131,6 +149,7 @@ fn run_tray_loop(
     let user_data = Box::new(WindowData {
         event_tx,
         config_path_wide: wide_null(&config_abs),
+        hinstance,
     });
     let user_data_ptr = Box::into_raw(user_data);
 
@@ -219,18 +238,7 @@ unsafe extern "system" fn wnd_proc(
                         let _ = data.event_tx.send(TrayEvent::NextWallpaper);
                     }
                     WM_RBUTTONUP => {
-                        let operation = wide_null("open");
-                        let result = ShellExecuteW(
-                            hwnd,
-                            operation.as_ptr(),
-                            data.config_path_wide.as_ptr(),
-                            ptr::null(),
-                            ptr::null(),
-                            SW_SHOWNORMAL,
-                        );
-                        if (result as isize) <= 32 {
-                            tracing::warn!("failed to open config from tray right-click");
-                        }
+                        show_context_menu(hwnd, data);
                     }
                     _ => {}
                 }
@@ -271,6 +279,269 @@ fn create_notify_icon_data(hwnd: HWND, hinstance: HINSTANCE) -> NOTIFYICONDATAW 
     nid.hIcon = load_tray_icon(hinstance);
     fill_tip(&mut nid.szTip, "bgm");
     nid
+}
+
+unsafe fn show_context_menu(hwnd: HWND, data: &WindowData) {
+    let menu = CreatePopupMenu();
+    if menu.is_null() {
+        tracing::warn!("CreatePopupMenu failed");
+        return;
+    }
+
+    let settings_label = wide_null("Settings");
+    let exit_label = wide_null("Exit");
+    let settings_icon = load_menu_icon_bitmap(
+        data.hinstance,
+        SETTINGS_ICON_RESOURCE_ID,
+        SETTINGS_ICON_FALLBACK_RESOURCE_ID,
+    );
+    let exit_icon = load_menu_icon_bitmap(
+        data.hinstance,
+        EXIT_ICON_RESOURCE_ID,
+        EXIT_ICON_FALLBACK_RESOURCE_ID,
+    );
+
+    if !insert_command_menu_item(
+        menu,
+        0,
+        TRAY_COMMAND_SETTINGS,
+        settings_label.as_ptr(),
+        settings_icon,
+    ) {
+        tracing::warn!("failed to add Settings tray menu item");
+    }
+    if !insert_separator_menu_item(menu, 1) {
+        tracing::warn!("failed to add separator tray menu item");
+    }
+    if !insert_command_menu_item(menu, 2, TRAY_COMMAND_EXIT, exit_label.as_ptr(), exit_icon) {
+        tracing::warn!("failed to add Exit tray menu item");
+    }
+
+    let mut point: POINT = std::mem::zeroed();
+    if GetCursorPos(&mut point) == 0 {
+        tracing::warn!("GetCursorPos failed for tray menu");
+        DestroyMenu(menu);
+        return;
+    }
+
+    SetForegroundWindow(hwnd);
+    let selected_command = TrackPopupMenu(
+        menu,
+        TPM_LEFTALIGN | TPM_RIGHTBUTTON | TPM_RETURNCMD,
+        point.x,
+        point.y,
+        0,
+        hwnd,
+        ptr::null(),
+    );
+    if selected_command != 0 {
+        handle_tray_command(hwnd, data, selected_command as u32);
+    }
+    PostMessageW(hwnd, WM_NULL, 0, 0);
+
+    DestroyMenu(menu);
+    cleanup_menu_icon_bitmap(settings_icon);
+    cleanup_menu_icon_bitmap(exit_icon);
+}
+
+unsafe fn handle_tray_command(hwnd: HWND, data: &WindowData, command_id: u32) {
+    match command_id {
+        TRAY_COMMAND_SETTINGS => {
+            open_settings_from_tray(hwnd, data);
+        }
+        TRAY_COMMAND_EXIT => {
+            let _ = data.event_tx.send(TrayEvent::Exit);
+        }
+        _ => {}
+    }
+}
+
+unsafe fn open_settings_from_tray(hwnd: HWND, data: &WindowData) {
+    let operation = wide_null("open");
+    let result = ShellExecuteW(
+        hwnd,
+        operation.as_ptr(),
+        data.config_path_wide.as_ptr(),
+        ptr::null(),
+        ptr::null(),
+        SW_SHOWNORMAL,
+    );
+    if (result as isize) <= 32 {
+        tracing::warn!("failed to open config from tray settings");
+    }
+}
+
+unsafe fn insert_command_menu_item(
+    menu: windows_sys::Win32::UI::WindowsAndMessaging::HMENU,
+    position: u32,
+    command_id: u32,
+    label: *const u16,
+    bitmap: HBITMAP,
+) -> bool {
+    let mut menu_item: MENUITEMINFOW = std::mem::zeroed();
+    menu_item.cbSize = size_of::<MENUITEMINFOW>() as u32;
+    menu_item.fMask = MIIM_ID | MIIM_STRING | MIIM_FTYPE;
+    menu_item.fType = MFT_STRING;
+    menu_item.wID = command_id;
+    menu_item.dwTypeData = label as *mut u16;
+
+    if !bitmap.is_null() {
+        menu_item.fMask |= MIIM_BITMAP;
+        menu_item.hbmpItem = bitmap;
+    }
+
+    InsertMenuItemW(menu, position, 1, &menu_item) != 0
+}
+
+unsafe fn insert_separator_menu_item(
+    menu: windows_sys::Win32::UI::WindowsAndMessaging::HMENU,
+    position: u32,
+) -> bool {
+    let mut menu_item: MENUITEMINFOW = std::mem::zeroed();
+    menu_item.cbSize = size_of::<MENUITEMINFOW>() as u32;
+    menu_item.fMask = MIIM_FTYPE;
+    menu_item.fType = MFT_SEPARATOR;
+    InsertMenuItemW(menu, position, 1, &menu_item) != 0
+}
+
+fn load_menu_icon_bitmap(
+    hinstance: HINSTANCE,
+    bitmap_resource_id: u16,
+    icon_fallback_resource_id: u16,
+) -> HBITMAP {
+    let fallback_icon = unsafe {
+        LoadImageW(
+            hinstance,
+            make_int_resource(icon_fallback_resource_id),
+            IMAGE_ICON,
+            MENU_ICON_SIZE,
+            MENU_ICON_SIZE,
+            LR_DEFAULTSIZE | LR_SHARED,
+        ) as HICON
+    };
+    if !fallback_icon.is_null() {
+        let fallback_bitmap = unsafe { render_icon_to_bitmap(fallback_icon) };
+        if !fallback_bitmap.is_null() {
+            tracing::debug!(
+                bitmap_resource_id,
+                icon_fallback_resource_id,
+                "loaded tray menu icon from icon resource"
+            );
+            return fallback_bitmap;
+        }
+    }
+    let icon_load_error = unsafe { GetLastError() };
+    let icon_resource_exists = unsafe {
+        !FindResourceW(
+            hinstance,
+            make_int_resource(icon_fallback_resource_id),
+            make_int_resource(RT_GROUP_ICON_RESOURCE_TYPE),
+        )
+        .is_null()
+    };
+
+    let bitmap = unsafe {
+        LoadImageW(
+            hinstance,
+            make_int_resource(bitmap_resource_id),
+            IMAGE_BITMAP,
+            0,
+            0,
+            LR_CREATEDIBSECTION,
+        ) as HBITMAP
+    };
+    if !bitmap.is_null() {
+        tracing::debug!(bitmap_resource_id, "loaded tray menu bitmap resource");
+        return bitmap;
+    }
+    let load_error = unsafe { GetLastError() };
+    let bitmap_resource_exists = unsafe {
+        !FindResourceW(
+            hinstance,
+            make_int_resource(bitmap_resource_id),
+            make_int_resource(RT_BITMAP_RESOURCE_TYPE),
+        )
+        .is_null()
+    };
+    tracing::warn!(
+        bitmap_resource_id,
+        icon_fallback_resource_id,
+        load_error,
+        icon_load_error,
+        bitmap_resource_exists,
+        icon_resource_exists,
+        "menu icon load failed; continuing without icon"
+    );
+    ptr::null_mut()
+}
+
+unsafe fn render_icon_to_bitmap(icon: HICON) -> HBITMAP {
+    let memory_dc = CreateCompatibleDC(ptr::null_mut());
+    if memory_dc.is_null() {
+        return ptr::null_mut();
+    }
+
+    let mut bmi: BITMAPINFO = std::mem::zeroed();
+    bmi.bmiHeader.biSize = size_of::<BITMAPINFOHEADER>() as u32;
+    bmi.bmiHeader.biWidth = MENU_ICON_SIZE;
+    // Negative height creates a top-down DIB.
+    bmi.bmiHeader.biHeight = -MENU_ICON_SIZE;
+    bmi.bmiHeader.biPlanes = 1;
+    bmi.bmiHeader.biBitCount = 32;
+    bmi.bmiHeader.biCompression = BI_RGB;
+
+    let mut bits = ptr::null_mut();
+    let bitmap = CreateDIBSection(
+        ptr::null_mut(),
+        &bmi,
+        DIB_RGB_COLORS,
+        &mut bits,
+        ptr::null_mut(),
+        0,
+    );
+    if bitmap.is_null() || bits.is_null() {
+        DeleteDC(memory_dc);
+        return ptr::null_mut();
+    }
+    std::ptr::write_bytes(bits, 0, (MENU_ICON_SIZE * MENU_ICON_SIZE * 4) as usize);
+
+    let old_object = SelectObject(memory_dc, bitmap as HGDIOBJ);
+    if old_object.is_null() {
+        DeleteObject(bitmap as HGDIOBJ);
+        DeleteDC(memory_dc);
+        return ptr::null_mut();
+    }
+
+    let draw_ok = DrawIconEx(
+        memory_dc,
+        0,
+        0,
+        icon,
+        MENU_ICON_SIZE,
+        MENU_ICON_SIZE,
+        0,
+        ptr::null_mut(),
+        DI_NORMAL,
+    );
+
+    SelectObject(memory_dc, old_object);
+    DeleteDC(memory_dc);
+
+    if draw_ok == 0 {
+        DeleteObject(bitmap as HGDIOBJ);
+        return ptr::null_mut();
+    }
+
+    bitmap
+}
+
+fn cleanup_menu_icon_bitmap(bitmap: HBITMAP) {
+    if bitmap.is_null() {
+        return;
+    }
+    unsafe {
+        DeleteObject(bitmap as HGDIOBJ);
+    }
 }
 
 fn load_tray_icon(hinstance: HINSTANCE) -> HICON {

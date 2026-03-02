@@ -1,6 +1,6 @@
 [package]
 name = "bgm"
-version = "0.5.14"
+version = "0.6.14"
 edition = "2021"
 
 [dependencies]
@@ -57,7 +57,10 @@ tempfile = "3.14"
 [build-dependencies]
 embed-resource = "3.0"
 ico = "0.4"
-image = { version = "0.25", default-features = false, features = ["png"] }
+image = { version = "0.25", default-features = false, features = [
+    "png",
+    "bmp",
+] }
 
 [profile.release]
 strip = true    # Automatically strip symbols from the binary.

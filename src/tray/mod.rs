@@ -1,6 +1,7 @@
 #[derive(Debug, Clone, Copy)]
 pub enum TrayEvent {
     NextWallpaper,
+    Exit,
 }
 
 #[cfg(windows)]

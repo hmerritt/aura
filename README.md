@@ -96,8 +96,9 @@ cargo run --release -- --version
 - Forces Windows wallpaper style to `Fill` on apply
 - Windows tray icon (enabled by default)
     - Double-click tray icon: switch to next wallpaper immediately
-    - Right-click tray icon: open active `bgm.hcl`
-    - Uses embedded icon generated from `assets/new-tray.png` (falls back to default if unavailable)
+    - Right-click tray icon: open menu with `Settings` and `Exit`
+    - `Settings` opens the active `bgm.hcl` and a separator appears above `Exit`
+    - Uses embedded tray/menu icons generated from `assets/tray.png`, `assets/menu-settings.png`, and `assets/menu-exit.png` (menu icons fall back to embedded icon resources if bitmap loading fails)
 - No-repeat shuffle rotation cycle
 - Local and remote image cache
 - Zero-open passthrough for matching `image_format` (`jpg`/`jpeg` alias supported)

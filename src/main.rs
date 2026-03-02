@@ -111,23 +111,35 @@ async fn main() -> Result<()> {
                 break;
             }
             tray_event = tray_event_rx.recv() => {
-                if let Some(TrayEvent::NextWallpaper) = tray_event {
-                    match refresh_local_sources(&mut sources).await {
-                        Ok(updated) => {
-                            rotation.rebuild_pool(updated);
-                            info!(pool_size = rotation.pool_size(), "local refresh complete before tray switch");
-                        }
-                        Err(error) => warn!(error = %error, "local refresh failed before tray switch"),
-                    }
-                    match try_switch_once(&mut rotation, cache.as_ref(), &*backend, &config).await {
-                        Ok(Some(next_id)) => {
-                            last_image_id = Some(next_id);
-                            if let Err(error) = persist_state(&state_store, &rotation, last_image_id.clone()) {
-                                warn!(error = %error, "failed to persist state after tray wallpaper switch");
+                match tray_event {
+                    Some(TrayEvent::NextWallpaper) => {
+                        match refresh_local_sources(&mut sources).await {
+                            Ok(updated) => {
+                                rotation.rebuild_pool(updated);
+                                info!(pool_size = rotation.pool_size(), "local refresh complete before tray switch");
                             }
+                            Err(error) => warn!(error = %error, "local refresh failed before tray switch"),
                         }
-                        Ok(None) => warn!("tray requested switch but no image available"),
-                        Err(error) => warn!(error = %error, "tray-requested wallpaper switch failed"),
+                        match try_switch_once(&mut rotation, cache.as_ref(), &*backend, &config).await {
+                            Ok(Some(next_id)) => {
+                                last_image_id = Some(next_id);
+                                if let Err(error) = persist_state(&state_store, &rotation, last_image_id.clone()) {
+                                    warn!(error = %error, "failed to persist state after tray wallpaper switch");
+                                }
+                            }
+                            Ok(None) => warn!("tray requested switch but no image available"),
+                            Err(error) => warn!(error = %error, "tray-requested wallpaper switch failed"),
+                        }
+                    }
+                    Some(TrayEvent::Exit) => {
+                        info!("tray requested exit, stopping bgm");
+                        persist_state(&state_store, &rotation, last_image_id.clone())?;
+                        break;
+                    }
+                    None => {
+                        info!("tray event channel closed, stopping bgm");
+                        persist_state(&state_store, &rotation, last_image_id.clone())?;
+                        break;
                     }
                 }
             }
