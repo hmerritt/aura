@@ -134,6 +134,7 @@ async fn main() -> Result<()> {
             warn!("renderer is set to shader but shader config is missing, using image mode");
         }
     }
+    session_stats.set_shader_active(active_mode == ActiveMode::Shader);
 
     let mut last_image_id = persisted_state.last_image_id.clone();
     if active_mode == ActiveMode::Image {
@@ -181,6 +182,7 @@ async fn main() -> Result<()> {
                             renderer = None;
                             renderer_event_rx = None;
                             active_mode = ActiveMode::Image;
+                            session_stats.set_shader_active(false);
                             match try_switch_once(&mut rotation, cache.as_ref(), &*backend, &config).await {
                                 Ok(Some(next_id)) => {
                                     session_stats.inc_images_shown();
@@ -292,6 +294,7 @@ async fn main() -> Result<()> {
                         renderer = None;
                         renderer_event_rx = None;
                         active_mode = ActiveMode::Image;
+                        session_stats.set_shader_active(false);
                         if config.renderer == RendererMode::Shader {
                             if let Some(shader_config) = config.shader.clone() {
                                 match ShaderRenderer::start(shader_config) {
@@ -299,6 +302,7 @@ async fn main() -> Result<()> {
                                         renderer_event_rx = new_renderer.take_event_receiver();
                                         renderer = Some(new_renderer);
                                         active_mode = ActiveMode::Shader;
+                                        session_stats.set_shader_active(true);
                                         info!("settings reload switched runtime to shader mode");
                                     }
                                     Err(error) => {
@@ -338,6 +342,7 @@ async fn main() -> Result<()> {
                                         renderer_event_rx = new_renderer.take_event_receiver();
                                         renderer = Some(new_renderer);
                                         active_mode = ActiveMode::Shader;
+                                        session_stats.set_shader_active(true);
                                         info!("shader renderer started from tray reload command");
                                     }
                                     Err(error) => warn!(error = %error, "failed to start shader renderer from tray reload command"),
@@ -347,15 +352,6 @@ async fn main() -> Result<()> {
                             }
                         } else {
                             warn!("shader reload requested while renderer mode is set to image");
-                        }
-                    }
-                    Some(TrayEvent::ToggleShaderPause) => {
-                        if let Some(renderer) = renderer.as_ref() {
-                            if let Err(error) = renderer.send_command(RendererCommand::TogglePause) {
-                                warn!(error = %error, "failed to toggle shader pause state");
-                            }
-                        } else {
-                            warn!("pause/resume shader requested but shader renderer is not running");
                         }
                     }
                     Some(TrayEvent::FallbackToImage) => {
@@ -368,6 +364,7 @@ async fn main() -> Result<()> {
                         renderer = None;
                         renderer_event_rx = None;
                         active_mode = ActiveMode::Image;
+                        session_stats.set_shader_active(false);
 
                         match try_switch_once(&mut rotation, cache.as_ref(), &*backend, &config).await {
                             Ok(Some(next_id)) => {

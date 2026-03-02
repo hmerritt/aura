@@ -50,10 +50,9 @@ const EXIT_ICON_FALLBACK_RESOURCE_ID: u16 = 302;
 const TRAY_COMMAND_NEXT_BACKGROUND: u32 = 1000;
 const TRAY_COMMAND_RELOAD_SETTINGS: u32 = 1001;
 const TRAY_COMMAND_RELOAD_SHADER: u32 = 1002;
-const TRAY_COMMAND_TOGGLE_SHADER_PAUSE: u32 = 1003;
-const TRAY_COMMAND_FALLBACK_TO_IMAGE: u32 = 1004;
-const TRAY_COMMAND_SETTINGS: u32 = 1005;
-const TRAY_COMMAND_EXIT: u32 = 1006;
+const TRAY_COMMAND_FALLBACK_TO_IMAGE: u32 = 1003;
+const TRAY_COMMAND_SETTINGS: u32 = 1004;
+const TRAY_COMMAND_EXIT: u32 = 1005;
 const MENU_ICON_SIZE: i32 = 16;
 const RT_BITMAP_RESOURCE_TYPE: u16 = 2;
 const RT_GROUP_ICON_RESOURCE_TYPE: u16 = 14;
@@ -321,10 +320,10 @@ unsafe fn show_context_menu(hwnd: HWND, data: &WindowData) {
     let shown_label = wide_null(&format_stat_row("Shown", &shown_value));
     let skipped_label = wide_null(&format_stat_row("Skipped", &skipped_value));
     let running_label = wide_null(&format_stat_row("Running", &running_value));
+    let shader_active = data.session_stats.is_shader_active();
     let next_background_label = wide_null("Next Background");
     let reload_settings_label = wide_null("Reload Settings");
     let reload_shader_label = wide_null("Reload Shader");
-    let toggle_shader_pause_label = wide_null("Pause/Resume Shader");
     let fallback_to_image_label = wide_null("Fallback To Image");
     let settings_label = wide_null("Settings");
     let exit_label = wide_null("Exit");
@@ -349,85 +348,98 @@ unsafe fn show_context_menu(hwnd: HWND, data: &WindowData) {
         EXIT_ICON_FALLBACK_RESOURCE_ID,
     );
 
-    if !insert_disabled_menu_item(menu, 0, timer_label.as_ptr()) {
+    let mut position: u32 = 0;
+    if !insert_disabled_menu_item(menu, position, timer_label.as_ptr()) {
         tracing::warn!("failed to add Timer tray menu item");
     }
-    if !insert_disabled_menu_item(menu, 1, remote_update_label.as_ptr()) {
+    position += 1;
+    if !insert_disabled_menu_item(menu, position, remote_update_label.as_ptr()) {
         tracing::warn!("failed to add Remote Update tray menu item");
     }
-    if !insert_disabled_menu_item(menu, 2, images_label.as_ptr()) {
+    position += 1;
+    if !insert_disabled_menu_item(menu, position, images_label.as_ptr()) {
         tracing::warn!("failed to add Images tray menu item");
     }
-    if !insert_disabled_menu_item(menu, 3, shown_label.as_ptr()) {
+    position += 1;
+    if !insert_disabled_menu_item(menu, position, shown_label.as_ptr()) {
         tracing::warn!("failed to add Shown tray menu item");
     }
-    if !insert_disabled_menu_item(menu, 4, skipped_label.as_ptr()) {
+    position += 1;
+    if !insert_disabled_menu_item(menu, position, skipped_label.as_ptr()) {
         tracing::warn!("failed to add Skipped tray menu item");
     }
-    if !insert_disabled_menu_item(menu, 5, running_label.as_ptr()) {
+    position += 1;
+    if !insert_disabled_menu_item(menu, position, running_label.as_ptr()) {
         tracing::warn!("failed to add Running tray menu item");
     }
-    if !insert_separator_menu_item(menu, 6) {
+    position += 1;
+    if !insert_separator_menu_item(menu, position) {
         tracing::warn!("failed to add tray stats separator menu item");
     }
+    position += 1;
     if !insert_command_menu_item(
         menu,
-        7,
+        position,
         TRAY_COMMAND_NEXT_BACKGROUND,
         next_background_label.as_ptr(),
         next_background_icon,
     ) {
         tracing::warn!("failed to add Next Background tray menu item");
     }
+    position += 1;
     if !insert_command_menu_item(
         menu,
-        8,
+        position,
         TRAY_COMMAND_RELOAD_SETTINGS,
         reload_settings_label.as_ptr(),
         refresh_icon,
     ) {
         tracing::warn!("failed to add Reload Settings tray menu item");
     }
-    if !insert_command_menu_item(
-        menu,
-        9,
-        TRAY_COMMAND_RELOAD_SHADER,
-        reload_shader_label.as_ptr(),
-        refresh_icon,
-    ) {
-        tracing::warn!("failed to add Reload Shader tray menu item");
+    if shader_active {
+        position += 1;
+        if !insert_command_menu_item(
+            menu,
+            position,
+            TRAY_COMMAND_RELOAD_SHADER,
+            reload_shader_label.as_ptr(),
+            refresh_icon,
+        ) {
+            tracing::warn!("failed to add Reload Shader tray menu item");
+        }
+        position += 1;
+        if !insert_command_menu_item(
+            menu,
+            position,
+            TRAY_COMMAND_FALLBACK_TO_IMAGE,
+            fallback_to_image_label.as_ptr(),
+            settings_icon,
+        ) {
+            tracing::warn!("failed to add Fallback To Image tray menu item");
+        }
     }
+    position += 1;
     if !insert_command_menu_item(
         menu,
-        10,
-        TRAY_COMMAND_TOGGLE_SHADER_PAUSE,
-        toggle_shader_pause_label.as_ptr(),
-        next_background_icon,
-    ) {
-        tracing::warn!("failed to add Pause/Resume Shader tray menu item");
-    }
-    if !insert_command_menu_item(
-        menu,
-        11,
-        TRAY_COMMAND_FALLBACK_TO_IMAGE,
-        fallback_to_image_label.as_ptr(),
-        settings_icon,
-    ) {
-        tracing::warn!("failed to add Fallback To Image tray menu item");
-    }
-    if !insert_command_menu_item(
-        menu,
-        12,
+        position,
         TRAY_COMMAND_SETTINGS,
         settings_label.as_ptr(),
         settings_icon,
     ) {
         tracing::warn!("failed to add Settings tray menu item");
     }
-    if !insert_separator_menu_item(menu, 13) {
+    position += 1;
+    if !insert_separator_menu_item(menu, position) {
         tracing::warn!("failed to add separator tray menu item");
     }
-    if !insert_command_menu_item(menu, 14, TRAY_COMMAND_EXIT, exit_label.as_ptr(), exit_icon) {
+    position += 1;
+    if !insert_command_menu_item(
+        menu,
+        position,
+        TRAY_COMMAND_EXIT,
+        exit_label.as_ptr(),
+        exit_icon,
+    ) {
         tracing::warn!("failed to add Exit tray menu item");
     }
 
@@ -470,9 +482,6 @@ unsafe fn handle_tray_command(hwnd: HWND, data: &WindowData, command_id: u32) {
         }
         TRAY_COMMAND_RELOAD_SHADER => {
             let _ = data.event_tx.send(TrayEvent::ReloadShader);
-        }
-        TRAY_COMMAND_TOGGLE_SHADER_PAUSE => {
-            let _ = data.event_tx.send(TrayEvent::ToggleShaderPause);
         }
         TRAY_COMMAND_FALLBACK_TO_IMAGE => {
             let _ = data.event_tx.send(TrayEvent::FallbackToImage);

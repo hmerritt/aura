@@ -178,12 +178,13 @@ log_level = "warn"
 renderer = "image"
 
 # Shader mode options (used when renderer = "shader")
-# [shader]
-# crate_path = "shaders/live_bg_shader"
-# target_fps = 60
-# hot_reload = true
-# reload_debounce_ms = 300
-# mouse_enabled = false
+#shader = {
+#	crate_path = "shaders/live_bg_shader"
+#	target_fps = 60
+#	hot_reload = true
+#	reload_debounce_ms = 300
+#	mouse_enabled = false
+#}
 "#,
         pictures
     )

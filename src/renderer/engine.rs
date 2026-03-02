@@ -67,7 +67,6 @@ impl ShaderRenderer {
     pub fn send_command(&self, command: RendererCommand) -> Result<()> {
         let user_event = match command {
             RendererCommand::ReloadShader => UserEvent::ReloadRequested,
-            RendererCommand::TogglePause => UserEvent::TogglePause,
             RendererCommand::DisableOutput => UserEvent::DisableOutput,
             RendererCommand::Stop => UserEvent::Stop,
         };
@@ -95,7 +94,6 @@ impl Drop for ShaderRenderer {
 enum UserEvent {
     ReloadRequested,
     CompileFinished(std::result::Result<(), String>),
-    TogglePause,
     DisableOutput,
     Stop,
 }
@@ -345,17 +343,6 @@ impl ApplicationHandler<UserEvent> for RendererApp {
         match event {
             UserEvent::ReloadRequested => self.request_compile(),
             UserEvent::CompileFinished(result) => self.handle_compile_finished(result),
-            UserEvent::TogglePause => {
-                if !self.enabled {
-                    return;
-                }
-                self.paused = !self.paused;
-                let _ = self.event_tx.send(if self.paused {
-                    RendererEvent::Paused
-                } else {
-                    RendererEvent::Running
-                });
-            }
             UserEvent::DisableOutput => {
                 self.enabled = false;
                 self.paused = true;

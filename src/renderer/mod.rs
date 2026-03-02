@@ -1,7 +1,6 @@
 #[derive(Debug, Clone)]
 pub enum RendererCommand {
     ReloadShader,
-    TogglePause,
     DisableOutput,
     Stop,
 }

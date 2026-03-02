@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::RwLock;
 use std::time::{Duration, Instant};
 
@@ -7,7 +7,6 @@ pub enum TrayEvent {
     NextWallpaper,
     ReloadSettings,
     ReloadShader,
-    ToggleShaderPause,
     FallbackToImage,
     Exit,
 }
@@ -19,6 +18,7 @@ pub struct SessionStats {
     total_images: AtomicU64,
     images_shown: AtomicU64,
     manual_skips: AtomicU64,
+    shader_active: AtomicBool,
     started_at: Instant,
 }
 
@@ -30,6 +30,7 @@ impl SessionStats {
             total_images: AtomicU64::new(0),
             images_shown: AtomicU64::new(0),
             manual_skips: AtomicU64::new(0),
+            shader_active: AtomicBool::new(false),
             started_at: Instant::now(),
         }
     }
@@ -84,6 +85,14 @@ impl SessionStats {
 
     pub fn manual_skips(&self) -> u64 {
         self.manual_skips.load(Ordering::Relaxed)
+    }
+
+    pub fn set_shader_active(&self, active: bool) {
+        self.shader_active.store(active, Ordering::Relaxed);
+    }
+
+    pub fn is_shader_active(&self) -> bool {
+        self.shader_active.load(Ordering::Relaxed)
     }
 
     pub fn running_duration(&self) -> Duration {
@@ -234,12 +243,14 @@ mod tests {
         assert_eq!(stats.images_shown(), 0);
         assert_eq!(stats.manual_skips(), 0);
         assert_eq!(stats.total_images(), 0);
+        assert!(!stats.is_shader_active());
         assert_eq!(stats.timer_display(), "3h");
         assert_eq!(stats.remote_update_timer_display(), "2h");
 
         stats.set_total_images(42);
         stats.set_timer_display("15m".to_string());
         stats.set_remote_update_timer_display("45m".to_string());
+        stats.set_shader_active(true);
         stats.inc_images_shown();
         stats.inc_images_shown();
         stats.inc_manual_skips();
@@ -247,6 +258,7 @@ mod tests {
         assert_eq!(stats.total_images(), 42);
         assert_eq!(stats.timer_display(), "15m");
         assert_eq!(stats.remote_update_timer_display(), "45m");
+        assert!(stats.is_shader_active());
         assert_eq!(stats.images_shown(), 2);
         assert_eq!(stats.manual_skips(), 1);
     }
