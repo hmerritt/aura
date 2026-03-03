@@ -1,5 +1,6 @@
-/target
+dist/
 /aura.hcl
 /shaders/**/target
 /shaders/*.spv
 /shaders/**/Cargo.lock
+/target

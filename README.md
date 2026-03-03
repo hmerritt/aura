@@ -91,6 +91,9 @@ cargo run --release -- --debug
 
 # Print version information
 cargo run --release -- --version
+
+# Build Squirrel installer/update artifacts
+pwsh -File scripts/windows/package-squirrel.ps1 -Version 1.2.3
 ```
 
 ### Platform Notes
@@ -98,7 +101,9 @@ cargo run --release -- --version
 - Windows: tray and wallpaper update flow are supported.
 - Windows launch behavior:
     - Default launch uses the GUI subsystem and does not open a terminal window.
-    - `--debug` shows logs in a terminal (attaches to the current terminal when possible, otherwise opens a console window).
+    - `--debug` shows logs in a dedicated console window (no attach to the current terminal session).
+- Windows installer packaging uses `Squirrel.Windows` in per-user scope (`%LOCALAPPDATA%`) and supports startup registration.
+- Installer details: `docs/windows-installer.md`
 - Windows shader mode: shaders are compiled at build time from `shaders/*` (excluding `shader_builder`) using rust-gpu.
 - Linux/macOS: check/test/build are supported for development; wallpaper apply is currently unsupported at runtime.
 

@@ -48,6 +48,10 @@ jobs:
         if: steps.tag_check.outputs.valid == 'true'
         run: choco install upx -y
 
+      - name: Install NuGet CLI
+        if: steps.tag_check.outputs.valid == 'true'
+        run: choco install nuget.commandline -y
+
       - name: Compress binary with UPX
         if: steps.tag_check.outputs.valid == 'true'
         run: upx --best --lzma target\release\aura.exe
@@ -61,6 +65,12 @@ jobs:
           Copy-Item target\release\aura.exe "dist\$exeName" -Force
           Compress-Archive -Path "dist\$exeName" -DestinationPath "dist\aura-${{ github.ref_name }}-windows-x86_64.zip" -Force
 
+      - name: Package Squirrel artifacts
+        if: steps.tag_check.outputs.valid == 'true'
+        shell: pwsh
+        run: |
+          .\scripts\windows\package-squirrel.ps1 -Version "${{ github.ref_name }}"
+
       - name: Upload release assets
         if: steps.tag_check.outputs.valid == 'true'
         uses: softprops/action-gh-release@v2
@@ -70,3 +80,6 @@ jobs:
           files: |
             dist/aura-${{ github.ref_name }}-windows-x86_64.exe
             dist/aura-${{ github.ref_name }}-windows-x86_64.zip
+            dist/squirrel/aura-${{ github.ref_name }}-setup.exe
+            dist/squirrel/RELEASES
+            dist/squirrel/*.nupkg

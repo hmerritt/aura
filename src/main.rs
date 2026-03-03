@@ -4,6 +4,7 @@ mod cache;
 mod config;
 mod errors;
 mod image_pipeline;
+mod installer;
 mod logging;
 mod renderer;
 mod rotation;
@@ -17,6 +18,7 @@ mod wallpaper;
 use crate::cache::CacheManager;
 use crate::config::{load_from_path, RendererMode};
 use crate::errors::Result;
+use crate::installer::SquirrelEvent;
 use crate::renderer::{RendererEvent, ShaderRenderer};
 use crate::rotation::RotationManager;
 use crate::scheduler::{Scheduler, SchedulerEvent};
@@ -43,12 +45,17 @@ struct CliOptions {
     tray_enabled: bool,
     debug_terminal: bool,
     print_version: bool,
+    squirrel_event: Option<SquirrelEvent>,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let args: Vec<String> = env::args().skip(1).collect();
     let options = parse_cli_options(&args)?;
+
+    if installer::handle_squirrel_event(options.squirrel_event)? {
+        return Ok(());
+    }
 
     ensure_debug_console(&options)?;
     if options.print_version {
@@ -415,18 +422,9 @@ fn print_version_banner() {
 #[cfg(windows)]
 fn ensure_debug_console(options: &CliOptions) -> Result<()> {
     use windows_sys::Win32::Foundation::{GetLastError, ERROR_ACCESS_DENIED};
-    use windows_sys::Win32::System::Console::{AllocConsole, AttachConsole, ATTACH_PARENT_PROCESS};
+    use windows_sys::Win32::System::Console::AllocConsole;
 
     if !options.debug_terminal && !options.print_version {
-        return Ok(());
-    }
-
-    if unsafe { AttachConsole(ATTACH_PARENT_PROCESS) } != 0 {
-        return Ok(());
-    }
-
-    let attach_error = unsafe { GetLastError() };
-    if attach_error == ERROR_ACCESS_DENIED {
         return Ok(());
     }
 
@@ -439,9 +437,7 @@ fn ensure_debug_console(options: &CliOptions) -> Result<()> {
         return Ok(());
     }
 
-    anyhow::bail!(
-        "failed to initialize console (attach_error={attach_error}, alloc_error={alloc_error})"
-    );
+    anyhow::bail!("failed to initialize debug console (alloc_error={alloc_error})");
 }
 
 #[cfg(not(windows))]
@@ -594,6 +590,7 @@ fn parse_cli_options(args: &[String]) -> Result<CliOptions> {
     let mut tray_enabled = true;
     let mut debug_terminal = false;
     let mut print_version = false;
+    let mut squirrel_event = None;
     let mut config_arg: Option<String> = None;
 
     for arg in args {
@@ -607,6 +604,13 @@ fn parse_cli_options(args: &[String]) -> Result<CliOptions> {
         }
         if arg == "--version" {
             print_version = true;
+            continue;
+        }
+        if let Some(event) = SquirrelEvent::from_flag(arg) {
+            if squirrel_event.is_some() {
+                anyhow::bail!("only one squirrel lifecycle flag is supported");
+            }
+            squirrel_event = Some(event);
             continue;
         }
 
@@ -636,6 +640,7 @@ fn parse_cli_options(args: &[String]) -> Result<CliOptions> {
         tray_enabled,
         debug_terminal,
         print_version,
+        squirrel_event,
     })
 }
 
@@ -733,6 +738,7 @@ mod tests {
         assert!(options.tray_enabled);
         assert!(!options.debug_terminal);
         assert!(!options.print_version);
+        assert_eq!(options.squirrel_event, None);
         assert_eq!(options.config_path.file_name().unwrap(), "aura.hcl");
     }
 
@@ -742,6 +748,7 @@ mod tests {
         assert!(!options.tray_enabled);
         assert!(!options.debug_terminal);
         assert!(!options.print_version);
+        assert_eq!(options.squirrel_event, None);
     }
 
     #[test]
@@ -750,6 +757,7 @@ mod tests {
         assert!(options.tray_enabled);
         assert!(options.debug_terminal);
         assert!(!options.print_version);
+        assert_eq!(options.squirrel_event, None);
     }
 
     #[test]
@@ -757,6 +765,7 @@ mod tests {
         let options = parse_cli_options(&["--version".to_string()]).unwrap();
         assert!(!options.debug_terminal);
         assert!(options.print_version);
+        assert_eq!(options.squirrel_event, None);
         assert!(options.config_path.as_os_str().is_empty());
     }
 
@@ -767,6 +776,7 @@ mod tests {
         assert!(options.print_version);
         assert!(!options.tray_enabled);
         assert!(!options.debug_terminal);
+        assert_eq!(options.squirrel_event, None);
     }
 
     #[test]
@@ -780,5 +790,27 @@ mod tests {
         assert!(options.print_version);
         assert!(!options.tray_enabled);
         assert!(options.debug_terminal);
+        assert_eq!(options.squirrel_event, None);
+    }
+
+    #[test]
+    fn cli_supports_squirrel_install_flag() {
+        let options = parse_cli_options(&["--squirrel-install".to_string()]).unwrap();
+        assert_eq!(options.squirrel_event, Some(SquirrelEvent::Install));
+    }
+
+    #[test]
+    fn cli_supports_squirrel_firstrun_flag() {
+        let options = parse_cli_options(&["--squirrel-firstrun".to_string()]).unwrap();
+        assert_eq!(options.squirrel_event, Some(SquirrelEvent::Firstrun));
+    }
+
+    #[test]
+    fn cli_rejects_multiple_squirrel_flags() {
+        let result = parse_cli_options(&[
+            "--squirrel-install".to_string(),
+            "--squirrel-updated".to_string(),
+        ]);
+        assert!(result.is_err());
     }
 }
