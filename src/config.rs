@@ -278,15 +278,6 @@ image = {{
 	jpeg_quality = 90
 }}
 
-# App update settings (Windows + Squirrel install only)
-updater = {{
-    enabled = true
-    # Duration between background update checks
-    checkInterval = "6h"
-    # Base URL containing RELEASES and .nupkg artifacts
-    feedUrl = "https://github.com/hmerritt/aura/releases/latest/download"
-}}
-
 # Shader mode options (used when renderer = "shader")
 shader = {{
 	name = "gradient_glossy" # "gradient_glossy" | "limestone_cave" | "dither_asci_1" | "dither_asci_2"
@@ -294,6 +285,15 @@ shader = {{
 	mouse_enabled = false
 	quality = "low" # "vlow" | "low" | "medium" | "high"
 	desktop_scope = "virtual" # "virtual" | "primary"
+}}
+
+# App update settings (Windows + Squirrel install only)
+updater = {{
+    enabled = true
+    # Duration between background update checks
+    checkInterval = "6h"
+    # Base URL containing RELEASES and .nupkg artifacts
+    feedUrl = "https://github.com/hmerritt/aura/releases/latest/download"
 }}
 "#,
         pictures

@@ -6,16 +6,16 @@ A simple, lightweight, wallpaper manager written in Rust.
 
 ## ⚡ Features
 
-- Small in size, low memory footprint
-- Support for live animated **_Shaders_** as wallpapers
-- Caches remote images locally for faster switching
-- Automatically re-encodes images for wider format support: `jpeg` | `png` | `bmp` | `gif` | `webp`
-- Tray icon to trigger a new image quickly
-- Windows self-updater for Squirrel installs (startup + periodic + manual checks)
+- Small in size, low memory footprint (~3MB when in `image` mode)
 - Multiple image `sources` can be added
     - Single image path
     - Directory path
     - RSS feed
+- Caches remote images locally for faster switching
+- Automatically re-encodes images for wider format support: `jpeg` | `png` | `bmp` | `gif` | `webp`
+- Tray icon to trigger a new image quickly
+- Built-in self-updater for seemless updates
+- **Shader** mode which engages a GPU-accelerated shader renderer, allowing for live animated wallpapers
 
 ## Example `aura.hcl` config file
 
@@ -44,13 +44,6 @@ image = {
   jpeg_quality = 90
 }
 
-# App update settings (Windows + Squirrel install only)
-updater = {
-  enabled = true
-  checkInterval = "6h"
-  feedUrl = "https://github.com/hmerritt/aura/releases/latest/download"
-}
-
 # Shader mode options (used when renderer = "shader")
 shader = {
 	name = "gradient_glossy" # "gradient_glossy" | "limestone_cave" | "dither_asci_1" | "dither_asci_2"
@@ -58,6 +51,13 @@ shader = {
 	mouse_enabled = false
 	quality = "medium" # "vlow" | "low" | "medium" | "high"
 	desktop_scope = "virtual" # "virtual" | "primary"
+}
+
+# App update settings (Windows + Squirrel install only)
+updater = {
+  enabled = true
+  checkInterval = "6h"
+  feedUrl = "https://github.com/hmerritt/aura/releases/latest/download"
 }
 ```
 

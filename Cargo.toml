@@ -1,6 +1,6 @@
 [package]
 name = "aura"
-version = "0.15.29"
+version = "0.16.29"
 edition = "2021"
 
 [dependencies]

@@ -43,10 +43,12 @@ const SINGLE_INSTANCE_MUTEX_NAME: &str = "Local\\aura-tray-single-instance";
 const TRAY_ICON_RESOURCE_ID: u16 = 101;
 const NEXT_BACKGROUND_ICON_RESOURCE_ID: u16 = 203;
 const REFRESH_ICON_RESOURCE_ID: u16 = 204;
+const RELOAD_SETTINGS_ICON_RESOURCE_ID: u16 = 205;
 const SETTINGS_ICON_RESOURCE_ID: u16 = 201;
 const EXIT_ICON_RESOURCE_ID: u16 = 202;
 const NEXT_BACKGROUND_ICON_FALLBACK_RESOURCE_ID: u16 = 303;
 const REFRESH_ICON_FALLBACK_RESOURCE_ID: u16 = 304;
+const RELOAD_SETTINGS_ICON_FALLBACK_RESOURCE_ID: u16 = 305;
 const SETTINGS_ICON_FALLBACK_RESOURCE_ID: u16 = 301;
 const EXIT_ICON_FALLBACK_RESOURCE_ID: u16 = 302;
 const TRAY_COMMAND_NEXT_BACKGROUND: u32 = 1000;
@@ -346,6 +348,11 @@ unsafe fn show_context_menu(hwnd: HWND, data: &WindowData) {
         REFRESH_ICON_RESOURCE_ID,
         REFRESH_ICON_FALLBACK_RESOURCE_ID,
     );
+    let reload_settings_icon = load_menu_icon_bitmap(
+        data.hinstance,
+        RELOAD_SETTINGS_ICON_RESOURCE_ID,
+        RELOAD_SETTINGS_ICON_FALLBACK_RESOURCE_ID,
+    );
     let settings_icon = load_menu_icon_bitmap(
         data.hinstance,
         SETTINGS_ICON_RESOURCE_ID,
@@ -424,16 +431,6 @@ unsafe fn show_context_menu(hwnd: HWND, data: &WindowData) {
         }
         position += 1;
     }
-    if !insert_command_menu_item(
-        menu,
-        position,
-        TRAY_COMMAND_RELOAD_SETTINGS,
-        reload_settings_label.as_ptr(),
-        refresh_icon,
-    ) {
-        tracing::warn!("failed to add Reload Settings tray menu item");
-    }
-    position += 1;
     if show_check_for_updates {
         if !insert_command_menu_item(
             menu,
@@ -446,6 +443,16 @@ unsafe fn show_context_menu(hwnd: HWND, data: &WindowData) {
         }
         position += 1;
     }
+    if !insert_command_menu_item(
+        menu,
+        position,
+        TRAY_COMMAND_RELOAD_SETTINGS,
+        reload_settings_label.as_ptr(),
+        reload_settings_icon,
+    ) {
+        tracing::warn!("failed to add Reload Settings tray menu item");
+    }
+    position += 1;
     if !insert_command_menu_item(
         menu,
         position,
@@ -495,6 +502,7 @@ unsafe fn show_context_menu(hwnd: HWND, data: &WindowData) {
     DestroyMenu(menu);
     cleanup_menu_icon_bitmap(next_background_icon);
     cleanup_menu_icon_bitmap(refresh_icon);
+    cleanup_menu_icon_bitmap(reload_settings_icon);
     cleanup_menu_icon_bitmap(settings_icon);
     cleanup_menu_icon_bitmap(exit_icon);
 }
