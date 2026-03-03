@@ -31,7 +31,7 @@ The release pipeline publishes both existing assets and Squirrel assets:
 
 - `aura-<version>-windows-x86_64.exe`
 - `aura-<version>-windows-x86_64.zip`
-- `aura-<version>-setup.exe`
+- `aura-<version>-installer.exe`
 - `RELEASES`
 - `*.nupkg` (full package and delta package when generated)
 

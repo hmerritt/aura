@@ -80,6 +80,6 @@ jobs:
           files: |
             dist/aura-${{ github.ref_name }}-windows-x86_64.exe
             dist/aura-${{ github.ref_name }}-windows-x86_64.zip
-            dist/squirrel/aura-${{ github.ref_name }}-setup.exe
+            dist/squirrel/aura-${{ github.ref_name }}-installer.exe
             dist/squirrel/RELEASES
             dist/squirrel/*.nupkg

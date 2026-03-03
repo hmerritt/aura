@@ -144,7 +144,7 @@ if (-not $setupExists) {
     throw "Squirrel setup executable was not found. It may not have generated, or it remains locked by an external process."
 }
 
-$versionedSetup = Join-Path $outputFullPath ("aura-{0}-setup.exe" -f $Version)
+$versionedSetup = Join-Path $outputFullPath ("aura-{0}-installer.exe" -f $Version)
 Copy-Item -LiteralPath $setupPath -Destination $versionedSetup -Force
 
 Write-Host "Squirrel packaging complete."
