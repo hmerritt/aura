@@ -1,5 +1,6 @@
 use crate::errors::Result;
 use crate::tray::{format_running_duration, tray_stat_visibility, SessionStats, TrayEvent};
+use crate::updater::UpdaterStatus;
 use crate::version;
 use anyhow::{anyhow, bail};
 use std::mem::size_of;
@@ -328,6 +329,8 @@ unsafe fn show_context_menu(hwnd: HWND, data: &WindowData) {
     let running_label = wide_null(&format_stat_row("Running", &running_value));
     let shader_active = data.session_stats.is_shader_active();
     let stat_visibility = tray_stat_visibility(shader_active);
+    let show_check_for_updates = app_update_value != UpdaterStatus::Disabled.label()
+        && app_update_value != UpdaterStatus::Unsupported.label();
     let next_background_label = wide_null("Next Background");
     let reload_settings_label = wide_null("Reload Settings");
     let check_updates_label = wide_null("Check for Updates");
@@ -431,16 +434,18 @@ unsafe fn show_context_menu(hwnd: HWND, data: &WindowData) {
         tracing::warn!("failed to add Reload Settings tray menu item");
     }
     position += 1;
-    if !insert_command_menu_item(
-        menu,
-        position,
-        TRAY_COMMAND_CHECK_FOR_UPDATES,
-        check_updates_label.as_ptr(),
-        refresh_icon,
-    ) {
-        tracing::warn!("failed to add Check for Updates tray menu item");
+    if show_check_for_updates {
+        if !insert_command_menu_item(
+            menu,
+            position,
+            TRAY_COMMAND_CHECK_FOR_UPDATES,
+            check_updates_label.as_ptr(),
+            refresh_icon,
+        ) {
+            tracing::warn!("failed to add Check for Updates tray menu item");
+        }
+        position += 1;
     }
-    position += 1;
     if !insert_command_menu_item(
         menu,
         position,
