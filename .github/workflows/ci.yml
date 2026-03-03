@@ -18,10 +18,10 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Install rust-gpu nightly toolchain
+      - name: Install rust-gpu nightly toolchain (must match shaders/rust-toolchain.toml)
         shell: pwsh
         run: |
-          rustup toolchain install nightly-2025-08-04 --profile minimal --component rust-src --component rustc-dev --component llvm-tools
+          rustup toolchain install nightly-2025-10-28 --profile minimal --component rust-src --component rustc-dev --component llvm-tools
 
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
