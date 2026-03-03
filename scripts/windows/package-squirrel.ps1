@@ -67,6 +67,7 @@ $inputDir = Join-Path $workRoot "input"
 $pkgDir = Join-Path $workRoot "pkg"
 $toolsDir = Join-Path $workRoot "tools"
 $nuspecPath = Join-Path $repoRoot "packaging\windows\squirrel\aura.nuspec"
+$packageIconSourcePath = Join-Path $repoRoot "assets\tray.png"
 
 if (-not (Test-Path -LiteralPath $binaryFullPath)) {
     throw "Binary does not exist: $binaryFullPath"
@@ -74,6 +75,9 @@ if (-not (Test-Path -LiteralPath $binaryFullPath)) {
 
 if (-not (Test-Path -LiteralPath $nuspecPath)) {
     throw "Nuspec does not exist: $nuspecPath"
+}
+if (-not (Test-Path -LiteralPath $packageIconSourcePath)) {
+    throw "Package icon source does not exist: $packageIconSourcePath"
 }
 
 # Execute cleanup prior to resolving and downloading executables
@@ -93,6 +97,7 @@ $nugetPath = Resolve-NuGetCommand -CommandName $NuGetExe
 $squirrelPath = Resolve-SquirrelExecutable -ProvidedPath $SquirrelExe -NuGetPath $nugetPath -ToolsDir $toolsDir
 
 Copy-Item -LiteralPath $binaryFullPath -Destination (Join-Path $inputDir "aura.exe") -Force
+Copy-Item -LiteralPath $packageIconSourcePath -Destination (Join-Path $inputDir "tray.png") -Force
 
 & $nugetPath pack $nuspecPath -Version $Version -BasePath $inputDir -OutputDirectory $pkgDir -NoPackageAnalysis -NonInteractive
 if ($LASTEXITCODE -ne 0) {

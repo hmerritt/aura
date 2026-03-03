@@ -8,10 +8,13 @@
     <owners>Harry Merritt</owners>
     <description>A simple, lightweight, wallpaper manager with enhanced features.</description>
     <projectUrl>https://github.com/hmerritt/aura</projectUrl>
+    <icon>tray.png</icon>
+    <iconUrl>https://github.com/hmerritt/aura/raw/master/assets/tray.png</iconUrl>
     <requireLicenseAcceptance>false</requireLicenseAcceptance>
     <language>en-US</language>
   </metadata>
   <files>
     <file src="aura.exe" target="lib\net45\aura.exe" />
+    <file src="tray.png" target="tray.png" />
   </files>
 </package>
