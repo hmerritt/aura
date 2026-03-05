@@ -133,7 +133,8 @@ pwsh -File scripts/windows/package-squirrel.ps1 -Version 1.2.3 -SquirrelWindowsV
 - Windows: tray and wallpaper update flow are supported.
 - Windows launch behavior:
     - Default launch uses the GUI subsystem and does not open a terminal window.
-    - `--debug` writes and appends all runtime output to `%LOCALAPPDATA%\aura\aura-debug.log` and still opens a dedicated console window.
+    - `--debug` writes and appends all runtime output to `%LOCALAPPDATA%\aura\aura-debug.log` (file-first diagnostics, no console required).
+    - On native crashes in `--debug`, Aura overwrites `%LOCALAPPDATA%\aura\aura-crash.dmp` and `%LOCALAPPDATA%\aura\aura-crash.txt` with the latest crash details.
 - Windows installer packaging uses `Squirrel.Windows` in per-user scope (`%LOCALAPPDATA%`) and supports startup registration.
 - Windows Squirrel installs automatically check/download app updates in the background and expose `Check for Updates` in tray.
 - Installer details: `docs/windows-installer.md`

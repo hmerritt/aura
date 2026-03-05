@@ -2,6 +2,7 @@
 
 mod cache;
 mod config;
+mod crash_capture;
 mod debug_capture;
 mod errors;
 mod image_pipeline;
@@ -20,7 +21,7 @@ mod wallpaper;
 use crate::cache::CacheManager;
 use crate::config::{load_from_path, RendererMode};
 use crate::errors::Result;
-use crate::installer::SquirrelEvent;
+use crate::installer::{SquirrelEvent, StartupRegistrationStatus};
 use crate::renderer::{RendererEvent, ShaderRenderer};
 use crate::rotation::RotationManager;
 use crate::scheduler::{Scheduler, SchedulerEvent};
@@ -80,16 +81,24 @@ async fn main() {
     };
     if debug_requested {
         debug_capture::install_debug_panic_hook();
+        if let Err(error) = crash_capture::install() {
+            let _ = writeln!(
+                std::io::stderr(),
+                "failed to initialize native crash capture: {error:#}"
+            );
+        }
     }
 
-    if let Err(error) = run(args).await {
+    if let Err(error) = run(args, debug_requested).await {
         let _ = writeln!(std::io::stderr(), "fatal error: {error:#}");
         std::process::exit(1);
     }
 }
 
-async fn run(args: Vec<String>) -> Result<()> {
+async fn run(args: Vec<String>, debug_requested: bool) -> Result<()> {
+    write_startup_stage(debug_requested, "parse_cli_options");
     let options = parse_cli_options(&args)?;
+    write_startup_stage(debug_requested, "handle_squirrel_event");
     let relaunch_args: Vec<String> = args
         .iter()
         .filter(|arg| SquirrelEvent::from_flag(arg).is_none())
@@ -101,17 +110,38 @@ async fn run(args: Vec<String>) -> Result<()> {
         return Ok(());
     }
 
-    ensure_debug_console(&options)?;
+    if !options.debug_terminal {
+        ensure_debug_console(&options)?;
+    }
     if options.print_version {
         print_version_banner();
         return Ok(());
     }
 
     let config_path = options.config_path.clone();
+    write_startup_stage(debug_requested, "ensure_config_exists");
     let created = ensure_config_exists(&config_path)?;
 
+    write_startup_stage(debug_requested, "load_config");
     let mut config = load_from_path(&config_path)?;
+    write_startup_stage(debug_requested, "init_tracing");
     logging::init(&config.log_level);
+    write_startup_stage(debug_requested, "ensure_startup_registered");
+    match installer::ensure_startup_registered() {
+        Ok(StartupRegistrationStatus::SkippedNotInstalled) => {
+            info!("startup registration check skipped: app is not running from a Squirrel install");
+        }
+        Ok(StartupRegistrationStatus::AlreadyRegistered) => {
+            info!("startup registration already present");
+        }
+        Ok(StartupRegistrationStatus::RegisteredNow) => {
+            info!("startup registration was missing and has been restored");
+        }
+        Err(error) => {
+            warn!(error = %error, "failed to enforce startup registration");
+        }
+    }
+    write_startup_stage(debug_requested, "runtime_started");
     if created {
         info!(path = %config_path.display(), "created default config");
     }
@@ -641,6 +671,14 @@ async fn run(args: Vec<String>) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn write_startup_stage(debug_requested: bool, stage: &str) {
+    if !debug_requested {
+        return;
+    }
+    let _ = writeln!(std::io::stderr(), "stage: {stage}");
+    let _ = std::io::stderr().flush();
 }
 
 fn request_update_check(
