@@ -145,6 +145,7 @@ struct WindowData {
     reopen_menu_requested: bool,
     last_app_update_status: String,
     active_menu: windows_sys::Win32::UI::WindowsAndMessaging::HMENU,
+    active_menu_has_check_for_updates: bool,
     update_status_menu_text_wide: Vec<u16>,
 }
 
@@ -184,6 +185,7 @@ fn run_tray_loop(
         reopen_menu_requested: false,
         last_app_update_status: session_stats.app_update_status(),
         active_menu: ptr::null_mut(),
+        active_menu_has_check_for_updates: false,
         update_status_menu_text_wide: wide_null(""),
     });
     let user_data_ptr = Box::into_raw(user_data);
@@ -294,6 +296,17 @@ unsafe extern "system" fn wnd_proc(
                             {
                                 tracing::warn!(
                                     "failed to update Update Status tray menu row in place"
+                                );
+                            }
+                            if data.active_menu_has_check_for_updates
+                                && !data.active_menu.is_null()
+                                && !set_check_for_updates_menu_enabled(
+                                    data.active_menu,
+                                    !app_update_status_label_is_in_progress(&app_update_status),
+                                )
+                            {
+                                tracing::warn!(
+                                    "failed to update Check for Updates tray menu item state in place"
                                 );
                             }
                             if app_update_status_label_is_terminal(&app_update_status) {
@@ -475,18 +488,16 @@ unsafe fn show_context_menu(hwnd: HWND, data: &mut WindowData) {
             position += 1;
         }
         if show_check_for_updates {
-            if allow_check_for_updates {
-                if !insert_command_menu_item(
-                    menu,
-                    position,
-                    TRAY_COMMAND_CHECK_FOR_UPDATES,
-                    check_updates_label.as_ptr(),
-                    refresh_icon,
-                ) {
-                    tracing::warn!("failed to add Check for Updates tray menu item");
-                }
-            } else if !insert_disabled_menu_item(menu, position, check_updates_label.as_ptr()) {
-                tracing::warn!("failed to add disabled Check for Updates tray menu item");
+            if !insert_command_menu_item(
+                menu,
+                position,
+                TRAY_COMMAND_CHECK_FOR_UPDATES,
+                check_updates_label.as_ptr(),
+                refresh_icon,
+            ) {
+                tracing::warn!("failed to add Check for Updates tray menu item");
+            } else if !set_check_for_updates_menu_enabled(menu, allow_check_for_updates) {
+                tracing::warn!("failed to set Check for Updates tray menu item state");
             }
             position += 1;
         }
@@ -542,6 +553,7 @@ unsafe fn show_context_menu(hwnd: HWND, data: &mut WindowData) {
 
         SetForegroundWindow(hwnd);
         data.active_menu = menu;
+        data.active_menu_has_check_for_updates = show_check_for_updates;
         let selected_command = TrackPopupMenu(
             menu,
             TPM_LEFTALIGN | TPM_RIGHTBUTTON | TPM_RETURNCMD | TPM_NOANIMATION,
@@ -552,6 +564,7 @@ unsafe fn show_context_menu(hwnd: HWND, data: &mut WindowData) {
             ptr::null(),
         );
         data.active_menu = ptr::null_mut();
+        data.active_menu_has_check_for_updates = false;
         if timer_started {
             KillTimer(hwnd, TRAY_MENU_REFRESH_TIMER_ID);
         }
@@ -675,6 +688,17 @@ unsafe fn update_update_status_menu_row(data: &mut WindowData, app_update_status
     menu_item.dwTypeData = data.update_status_menu_text_wide.as_mut_ptr();
 
     SetMenuItemInfoW(data.active_menu, TRAY_UPDATE_STATUS_MENU_POSITION, 1, &menu_item) != 0
+}
+
+unsafe fn set_check_for_updates_menu_enabled(
+    menu: windows_sys::Win32::UI::WindowsAndMessaging::HMENU,
+    enabled: bool,
+) -> bool {
+    let mut menu_item: MENUITEMINFOW = std::mem::zeroed();
+    menu_item.cbSize = size_of::<MENUITEMINFOW>() as u32;
+    menu_item.fMask = MIIM_STATE;
+    menu_item.fState = if enabled { 0 } else { MFS_DISABLED };
+    SetMenuItemInfoW(menu, TRAY_COMMAND_CHECK_FOR_UPDATES, 0, &menu_item) != 0
 }
 
 fn load_menu_icon_bitmap(
@@ -855,7 +879,6 @@ fn app_update_status_label_is_in_progress(status: &str) -> bool {
     status == UpdaterStatus::Checking.label()
         || status == UpdaterStatus::UpdateAvailable.label()
         || status == UpdaterStatus::Installing.label()
-        || status == UpdaterStatus::InstalledPendingRestart.label()
 }
 
 fn app_update_status_label_is_terminal(status: &str) -> bool {
@@ -897,7 +920,7 @@ mod tests {
         assert!(app_update_status_label_is_in_progress(
             UpdaterStatus::Installing.label()
         ));
-        assert!(app_update_status_label_is_in_progress(
+        assert!(!app_update_status_label_is_in_progress(
             UpdaterStatus::InstalledPendingRestart.label()
         ));
         assert!(!app_update_status_label_is_in_progress(
