@@ -1,5 +1,5 @@
 use crate::errors::Result;
-use crate::tray::{format_running_duration, tray_stat_visibility, SessionStats, TrayEvent};
+use crate::tray::{format_running_duration, SessionStats, TrayEvent};
 use crate::updater::UpdaterStatus;
 use crate::version;
 use anyhow::{anyhow, bail};
@@ -353,18 +353,19 @@ unsafe fn show_context_menu(hwnd: HWND, data: &mut WindowData) {
         let shown_value = data.session_stats.images_shown().to_string();
         let skipped_value = data.session_stats.manual_skips().to_string();
         let running_value = format_running_duration(data.session_stats.running_duration());
+        let shader_name_value = data.session_stats.shader_name();
         let app_version_value = version::get_version().full_version_number(false);
 
         let app_version_label = wide_null(&app_version_value);
         let timer_label = wide_null(&format_stat_row("Timer", &timer_value));
         let remote_update_label = wide_null(&format_stat_row("Remote Update", &remote_update_value));
-        let app_update_label = wide_null(&format_stat_row("App Update", &app_update_value));
+        let update_status_label = wide_null(&format_stat_row("Update Status", &app_update_value));
         let images_label = wide_null(&format_stat_row("Images", &images_value));
         let shown_label = wide_null(&format_stat_row("Shown", &shown_value));
         let skipped_label = wide_null(&format_stat_row("Skipped", &skipped_value));
         let running_label = wide_null(&format_stat_row("Running", &running_value));
+        let shader_label = wide_null(&format_stat_row("Shader", &shader_name_value));
         let shader_active = data.session_stats.is_shader_active();
-        let stat_visibility = tray_stat_visibility(shader_active);
         let show_check_for_updates = app_update_value != UpdaterStatus::Disabled.label()
             && app_update_value != UpdaterStatus::Unsupported.label();
         let allow_check_for_updates = !app_update_status_label_is_in_progress(&app_update_value);
@@ -408,50 +409,47 @@ unsafe fn show_context_menu(hwnd: HWND, data: &mut WindowData) {
             tracing::warn!("failed to add version separator tray menu item");
         }
         position += 1;
-        if stat_visibility.timer {
+        if !insert_disabled_menu_item(menu, position, update_status_label.as_ptr()) {
+            tracing::warn!("failed to add Update Status tray menu item");
+        }
+        position += 1;
+        if !insert_disabled_menu_item(menu, position, running_label.as_ptr()) {
+            tracing::warn!("failed to add Running tray menu item");
+        }
+        position += 1;
+        if !insert_separator_menu_item(menu, position) {
+            tracing::warn!("failed to add tray stats separator menu item");
+        }
+        position += 1;
+        if shader_active {
+            if !insert_disabled_menu_item(menu, position, shader_label.as_ptr()) {
+                tracing::warn!("failed to add Shader tray menu item");
+            }
+            position += 1;
+        } else {
             if !insert_disabled_menu_item(menu, position, timer_label.as_ptr()) {
                 tracing::warn!("failed to add Timer tray menu item");
             }
             position += 1;
-        }
-        if stat_visibility.remote_update {
             if !insert_disabled_menu_item(menu, position, remote_update_label.as_ptr()) {
                 tracing::warn!("failed to add Remote Update tray menu item");
             }
             position += 1;
-        }
-        if stat_visibility.app_update {
-            if !insert_disabled_menu_item(menu, position, app_update_label.as_ptr()) {
-                tracing::warn!("failed to add App Update tray menu item");
-            }
-            position += 1;
-        }
-        if stat_visibility.images {
             if !insert_disabled_menu_item(menu, position, images_label.as_ptr()) {
                 tracing::warn!("failed to add Images tray menu item");
             }
             position += 1;
-        }
-        if stat_visibility.shown {
             if !insert_disabled_menu_item(menu, position, shown_label.as_ptr()) {
                 tracing::warn!("failed to add Shown tray menu item");
             }
             position += 1;
-        }
-        if stat_visibility.skipped {
             if !insert_disabled_menu_item(menu, position, skipped_label.as_ptr()) {
                 tracing::warn!("failed to add Skipped tray menu item");
             }
             position += 1;
         }
-        if stat_visibility.running {
-            if !insert_disabled_menu_item(menu, position, running_label.as_ptr()) {
-                tracing::warn!("failed to add Running tray menu item");
-            }
-            position += 1;
-        }
         if !insert_separator_menu_item(menu, position) {
-            tracing::warn!("failed to add tray stats separator menu item");
+            tracing::warn!("failed to add renderer-specific separator tray menu item");
         }
         position += 1;
         if !shader_active {

@@ -15,6 +15,7 @@ pub struct SessionStats {
     timer_display: RwLock<String>,
     remote_update_timer_display: RwLock<String>,
     app_update_status: RwLock<String>,
+    shader_name: RwLock<String>,
     total_images: AtomicU64,
     images_shown: AtomicU64,
     manual_skips: AtomicU64,
@@ -27,11 +28,13 @@ impl SessionStats {
         timer_display: String,
         remote_update_timer_display: String,
         app_update_status: String,
+        shader_name: String,
     ) -> Self {
         Self {
             timer_display: RwLock::new(timer_display),
             remote_update_timer_display: RwLock::new(remote_update_timer_display),
             app_update_status: RwLock::new(app_update_status),
+            shader_name: RwLock::new(shader_name),
             total_images: AtomicU64::new(0),
             images_shown: AtomicU64::new(0),
             manual_skips: AtomicU64::new(0),
@@ -80,6 +83,17 @@ impl SessionStats {
             .app_update_status
             .write()
             .expect("app update status lock poisoned") = app_update_status;
+    }
+
+    pub fn shader_name(&self) -> String {
+        self.shader_name
+            .read()
+            .expect("shader name lock poisoned")
+            .clone()
+    }
+
+    pub fn set_shader_name(&self, shader_name: String) {
+        *self.shader_name.write().expect("shader name lock poisoned") = shader_name;
     }
 
     pub fn set_total_images(&self, total_images: u64) {
@@ -281,7 +295,12 @@ mod tests {
 
     #[test]
     fn session_stats_counters_increment() {
-        let stats = SessionStats::new("3h".to_string(), "2h".to_string(), "Idle".to_string());
+        let stats = SessionStats::new(
+            "3h".to_string(),
+            "2h".to_string(),
+            "Idle".to_string(),
+            "".to_string(),
+        );
         assert_eq!(stats.images_shown(), 0);
         assert_eq!(stats.manual_skips(), 0);
         assert_eq!(stats.total_images(), 0);
@@ -289,11 +308,13 @@ mod tests {
         assert_eq!(stats.timer_display(), "3h");
         assert_eq!(stats.remote_update_timer_display(), "2h");
         assert_eq!(stats.app_update_status(), "Idle");
+        assert_eq!(stats.shader_name(), "");
 
         stats.set_total_images(42);
         stats.set_timer_display("15m".to_string());
         stats.set_remote_update_timer_display("45m".to_string());
         stats.set_app_update_status("Checking".to_string());
+        stats.set_shader_name("gradient_glossy".to_string());
         stats.set_shader_active(true);
         stats.inc_images_shown();
         stats.inc_images_shown();
@@ -303,6 +324,7 @@ mod tests {
         assert_eq!(stats.timer_display(), "15m");
         assert_eq!(stats.remote_update_timer_display(), "45m");
         assert_eq!(stats.app_update_status(), "Checking");
+        assert_eq!(stats.shader_name(), "gradient_glossy");
         assert!(stats.is_shader_active());
         assert_eq!(stats.images_shown(), 2);
         assert_eq!(stats.manual_skips(), 1);

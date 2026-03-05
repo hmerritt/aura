@@ -117,10 +117,20 @@ async fn main() -> Result<()> {
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         interval
     });
+    let initial_shader_name = if config.renderer == RendererMode::Shader {
+        config
+            .shader
+            .as_ref()
+            .map(|shader| shader.name.clone())
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
     let session_stats = Arc::new(SessionStats::new(
         format_config_duration(config.image.timer),
         format_config_duration(config.image.remote_update_timer),
         updater_runtime.status().label().to_string(),
+        initial_shader_name,
     ));
     session_stats.set_total_images(local_images_count + remote_images_count);
 
@@ -149,11 +159,13 @@ async fn main() -> Result<()> {
     let mut active_mode = ActiveMode::Image;
     if config.renderer == RendererMode::Shader {
         if let Some(shader_config) = config.shader.clone() {
+            let shader_name = shader_config.name.clone();
             match ShaderRenderer::start(shader_config) {
                 Ok(mut shader_renderer) => {
                     renderer_event_rx = shader_renderer.take_event_receiver();
                     renderer = Some(shader_renderer);
                     active_mode = ActiveMode::Shader;
+                    session_stats.set_shader_name(shader_name);
                     info!("shader renderer started");
                 }
                 Err(error) => {
@@ -168,6 +180,9 @@ async fn main() -> Result<()> {
         }
     }
     session_stats.set_shader_active(active_mode == ActiveMode::Shader);
+    if active_mode != ActiveMode::Shader {
+        session_stats.set_shader_name(String::new());
+    }
 
     let mut last_image_id = persisted_state.last_image_id.clone();
     if active_mode == ActiveMode::Image {
@@ -292,6 +307,7 @@ async fn main() -> Result<()> {
                             renderer_event_rx = None;
                             active_mode = ActiveMode::Image;
                             session_stats.set_shader_active(false);
+                            session_stats.set_shader_name(String::new());
                             match try_switch_once(&mut rotation, cache.as_ref(), &*backend, &config).await {
                                 Ok(Some(next_id)) => {
                                     session_stats.inc_images_shown();
@@ -443,14 +459,17 @@ async fn main() -> Result<()> {
                         renderer_event_rx = None;
                         active_mode = ActiveMode::Image;
                         session_stats.set_shader_active(false);
+                        session_stats.set_shader_name(String::new());
                         if config.renderer == RendererMode::Shader {
                             if let Some(shader_config) = config.shader.clone() {
+                                let shader_name = shader_config.name.clone();
                                 match ShaderRenderer::start(shader_config) {
                                     Ok(mut new_renderer) => {
                                         renderer_event_rx = new_renderer.take_event_receiver();
                                         renderer = Some(new_renderer);
                                         active_mode = ActiveMode::Shader;
                                         session_stats.set_shader_active(true);
+                                        session_stats.set_shader_name(shader_name);
                                         info!("settings reload switched runtime to shader mode");
                                     }
                                     Err(error) => {
