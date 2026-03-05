@@ -27,14 +27,14 @@ use windows_sys::Win32::UI::Shell::{
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow, DispatchMessageW,
-    DrawIconEx, EndMenu, GetCursorPos, GetWindowLongPtrW, InsertMenuItemW, KillTimer, LoadIconW,
-    LoadImageW, PeekMessageW, PostMessageW, RegisterClassW, SetForegroundWindow, SetTimer,
+    DrawIconEx, GetCursorPos, GetWindowLongPtrW, InsertMenuItemW, KillTimer, LoadIconW, LoadImageW,
+    PeekMessageW, PostMessageW, RegisterClassW, SetForegroundWindow, SetMenuItemInfoW, SetTimer,
     SetWindowLongPtrW, TrackPopupMenu, TranslateMessage, DI_NORMAL, GWLP_USERDATA, HICON,
     IDI_APPLICATION, IMAGE_BITMAP, IMAGE_ICON, LR_CREATEDIBSECTION, LR_DEFAULTSIZE, LR_SHARED,
     MENUITEMINFOW, MFS_DISABLED, MFT_SEPARATOR, MFT_STRING, MIIM_BITMAP, MIIM_FTYPE, MIIM_ID,
-    MIIM_STATE, MIIM_STRING, MSG, PM_REMOVE, SW_SHOWNORMAL, TPM_LEFTALIGN, TPM_RETURNCMD,
-    TPM_RIGHTBUTTON, WM_APP, WM_LBUTTONDBLCLK, WM_NCCREATE, WM_NCDESTROY, WM_NULL, WM_RBUTTONUP,
-    WM_TIMER, WNDCLASSW, WS_EX_NOACTIVATE,
+    MIIM_STATE, MIIM_STRING, MSG, PM_REMOVE, SW_SHOWNORMAL, TPM_LEFTALIGN, TPM_NOANIMATION,
+    TPM_RETURNCMD, TPM_RIGHTBUTTON, WM_APP, WM_LBUTTONDBLCLK, WM_NCCREATE, WM_NCDESTROY, WM_NULL,
+    WM_RBUTTONUP, WM_TIMER, WNDCLASSW, WS_EX_NOACTIVATE,
 };
 
 const TRAY_ICON_ID: u32 = 1;
@@ -58,6 +58,7 @@ const TRAY_COMMAND_SETTINGS: u32 = 1004;
 const TRAY_COMMAND_EXIT: u32 = 1005;
 const TRAY_MENU_REFRESH_TIMER_ID: usize = 1;
 const TRAY_MENU_REFRESH_INTERVAL_MS: u32 = 250;
+const TRAY_UPDATE_STATUS_MENU_POSITION: u32 = 2;
 const MENU_ICON_SIZE: i32 = 16;
 const RT_BITMAP_RESOURCE_TYPE: u16 = 2;
 const RT_GROUP_ICON_RESOURCE_TYPE: u16 = 14;
@@ -143,6 +144,8 @@ struct WindowData {
     sticky_update_menu_active: bool,
     reopen_menu_requested: bool,
     last_app_update_status: String,
+    active_menu: windows_sys::Win32::UI::WindowsAndMessaging::HMENU,
+    update_status_menu_text_wide: Vec<u16>,
 }
 
 fn run_tray_loop(
@@ -180,6 +183,8 @@ fn run_tray_loop(
         sticky_update_menu_active: false,
         reopen_menu_requested: false,
         last_app_update_status: session_stats.app_update_status(),
+        active_menu: ptr::null_mut(),
+        update_status_menu_text_wide: wide_null(""),
     });
     let user_data_ptr = Box::into_raw(user_data);
 
@@ -284,11 +289,16 @@ unsafe extern "system" fn wnd_proc(
                         let app_update_status = data.session_stats.app_update_status();
                         if app_update_status != data.last_app_update_status {
                             data.last_app_update_status = app_update_status.clone();
-                            data.reopen_menu_requested = true;
+                            if !data.active_menu.is_null()
+                                && !update_update_status_menu_row(data, &app_update_status)
+                            {
+                                tracing::warn!(
+                                    "failed to update Update Status tray menu row in place"
+                                );
+                            }
                             if app_update_status_label_is_terminal(&app_update_status) {
                                 data.sticky_update_menu_active = false;
                             }
-                            EndMenu();
                         }
                     }
                 }
@@ -531,15 +541,17 @@ unsafe fn show_context_menu(hwnd: HWND, data: &mut WindowData) {
         }
 
         SetForegroundWindow(hwnd);
+        data.active_menu = menu;
         let selected_command = TrackPopupMenu(
             menu,
-            TPM_LEFTALIGN | TPM_RIGHTBUTTON | TPM_RETURNCMD,
+            TPM_LEFTALIGN | TPM_RIGHTBUTTON | TPM_RETURNCMD | TPM_NOANIMATION,
             anchor_point.x,
             anchor_point.y,
             0,
             hwnd,
             ptr::null(),
         );
+        data.active_menu = ptr::null_mut();
         if timer_started {
             KillTimer(hwnd, TRAY_MENU_REFRESH_TIMER_ID);
         }
@@ -651,6 +663,18 @@ unsafe fn insert_disabled_menu_item(
     menu_item.fState = MFS_DISABLED;
     menu_item.dwTypeData = label as *mut u16;
     InsertMenuItemW(menu, position, 1, &menu_item) != 0
+}
+
+unsafe fn update_update_status_menu_row(data: &mut WindowData, app_update_status: &str) -> bool {
+    data.update_status_menu_text_wide =
+        wide_null(&format_stat_row("Update Status", app_update_status));
+
+    let mut menu_item: MENUITEMINFOW = std::mem::zeroed();
+    menu_item.cbSize = size_of::<MENUITEMINFOW>() as u32;
+    menu_item.fMask = MIIM_STRING;
+    menu_item.dwTypeData = data.update_status_menu_text_wide.as_mut_ptr();
+
+    SetMenuItemInfoW(data.active_menu, TRAY_UPDATE_STATUS_MENU_POSITION, 1, &menu_item) != 0
 }
 
 fn load_menu_icon_bitmap(
