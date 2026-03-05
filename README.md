@@ -115,7 +115,7 @@ cargo run --release -- --no-tray
 # Run with an explicit config path
 cargo run --release -- /path/to/aura.hcl
 
-# Run with terminal logs visible (`--debug`)
+# Run with debug logging enabled (`--debug`)
 cargo run --release -- --debug
 
 # Print version information
@@ -133,7 +133,7 @@ pwsh -File scripts/windows/package-squirrel.ps1 -Version 1.2.3 -SquirrelWindowsV
 - Windows: tray and wallpaper update flow are supported.
 - Windows launch behavior:
     - Default launch uses the GUI subsystem and does not open a terminal window.
-    - `--debug` shows logs in a dedicated console window (no attach to the current terminal session).
+    - `--debug` writes and appends all runtime output to `%LOCALAPPDATA%\aura\aura-debug.log` and still opens a dedicated console window.
 - Windows installer packaging uses `Squirrel.Windows` in per-user scope (`%LOCALAPPDATA%`) and supports startup registration.
 - Windows Squirrel installs automatically check/download app updates in the background and expose `Check for Updates` in tray.
 - Installer details: `docs/windows-installer.md`

@@ -2,6 +2,7 @@
 
 mod cache;
 mod config;
+mod debug_capture;
 mod errors;
 mod image_pipeline;
 mod installer;
@@ -31,6 +32,7 @@ use anyhow::Context;
 use std::collections::HashSet;
 use std::env;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -52,8 +54,41 @@ struct CliOptions {
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() {
     let args: Vec<String> = env::args().skip(1).collect();
+    let debug_requested = debug_capture::is_debug_requested(&args);
+    let _debug_capture = if debug_requested {
+        match debug_capture::DebugCapture::init() {
+            Ok(capture) => {
+                let _ = writeln!(
+                    std::io::stderr(),
+                    "debug logging enabled: {}",
+                    capture.path().display()
+                );
+                Some(capture)
+            }
+            Err(error) => {
+                let _ = writeln!(
+                    std::io::stderr(),
+                    "failed to initialize debug logging: {error:#}"
+                );
+                None
+            }
+        }
+    } else {
+        None
+    };
+    if debug_requested {
+        debug_capture::install_debug_panic_hook();
+    }
+
+    if let Err(error) = run(args).await {
+        let _ = writeln!(std::io::stderr(), "fatal error: {error:#}");
+        std::process::exit(1);
+    }
+}
+
+async fn run(args: Vec<String>) -> Result<()> {
     let options = parse_cli_options(&args)?;
     let relaunch_args: Vec<String> = args
         .iter()

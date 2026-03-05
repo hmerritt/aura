@@ -1,6 +1,6 @@
 [package]
 name = "aura"
-version = "0.18.30"
+version = "0.18.32"
 edition = "2021"
 
 [dependencies]
@@ -10,6 +10,7 @@ blake3 = "1.5"
 bytemuck = { version = "1.19", features = ["derive"] }
 dirs = "5.0"
 feed-rs = "2.3"
+gag = "1.0"
 hcl = { package = "hcl-rs", version = "0.18" }
 image = { version = "0.25", default-features = false, features = [
     "jpeg",
@@ -39,6 +40,7 @@ tokio = { version = "1.44", features = [
 ] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+time = { version = "0.3", features = ["formatting"] }
 url = "2.5"
 walkdir = "2.5"
 wgpu = { version = "0.20", features = ["spirv"] }
