@@ -2,7 +2,13 @@
 
 A simple, lightweight, wallpaper manager written in Rust.
 
+\+ An optional `shader` mode, which engages a GPU-accelerated shader renderer, that renders live shaders as your desktop wallpaper (this mode consumes more RAM, ~80-120MB, but is a lot of fun!).
+
 [Download here 💾](https://github.com/hmerritt/aura/releases/latest)
+
+https://github.com/user-attachments/assets/500d83a2-5c5e-4722-8a4e-b544f1f27784
+
+> Shader mode, rendering `gradient_glossy`
 
 ## ⚡ Features
 
@@ -16,10 +22,6 @@ A simple, lightweight, wallpaper manager written in Rust.
 - Tray icon to trigger a new image quickly
 - Built-in self-updater for seemless updates
 - **Shader** mode which engages a GPU-accelerated shader renderer, allowing for live animated wallpapers
-
-https://github.com/user-attachments/assets/500d83a2-5c5e-4722-8a4e-b544f1f27784
-
-
 
 ## Example `aura.hcl` config file
 
