@@ -60,6 +60,105 @@ function Resolve-SquirrelExecutable {
     return $candidate
 }
 
+function Convert-PngToIco {
+    param(
+        [string]$SourcePath,
+        [string]$DestinationPath,
+        [int]$Size = 256
+    )
+
+    if (-not (Test-Path -LiteralPath $SourcePath)) {
+        throw "Cannot convert missing PNG to ICO: $SourcePath"
+    }
+
+    if ($Size -le 0) {
+        throw "ICO size must be a positive integer. Received: $Size"
+    }
+
+    Add-Type -AssemblyName System.Drawing
+
+    $targetSize = [Math]::Min($Size, 256)
+    $sourceImage = [System.Drawing.Image]::FromFile($SourcePath)
+    try {
+        $bitmap = New-Object System.Drawing.Bitmap(
+            $targetSize,
+            $targetSize,
+            [System.Drawing.Imaging.PixelFormat]::Format32bppArgb
+        )
+        try {
+            $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+            try {
+                $graphics.Clear([System.Drawing.Color]::Transparent)
+                $graphics.CompositingQuality = [System.Drawing.Drawing2D.CompositingQuality]::HighQuality
+                $graphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+                $graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::HighQuality
+                $graphics.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
+                $graphics.DrawImage($sourceImage, 0, 0, $targetSize, $targetSize)
+            }
+            finally {
+                $graphics.Dispose()
+            }
+
+            $pngStream = New-Object System.IO.MemoryStream
+            try {
+                $bitmap.Save($pngStream, [System.Drawing.Imaging.ImageFormat]::Png)
+                $pngBytes = $pngStream.ToArray()
+
+                $destinationDirectory = Split-Path -Path $DestinationPath -Parent
+                if ($destinationDirectory) {
+                    New-Item -ItemType Directory -Path $destinationDirectory -Force | Out-Null
+                }
+
+                $icoStream = [System.IO.File]::Open(
+                    $DestinationPath,
+                    [System.IO.FileMode]::Create,
+                    [System.IO.FileAccess]::Write,
+                    [System.IO.FileShare]::None
+                )
+                try {
+                    $writer = New-Object System.IO.BinaryWriter($icoStream)
+                    try {
+                        $entryWidth = if ($targetSize -ge 256) { [byte]0 } else { [byte]$targetSize }
+                        $entryHeight = if ($targetSize -ge 256) { [byte]0 } else { [byte]$targetSize }
+
+                        # ICONDIR
+                        $writer.Write([UInt16]0)
+                        $writer.Write([UInt16]1)
+                        $writer.Write([UInt16]1)
+
+                        # ICONDIRENTRY
+                        $writer.Write($entryWidth)
+                        $writer.Write($entryHeight)
+                        $writer.Write([byte]0)
+                        $writer.Write([byte]0)
+                        $writer.Write([UInt16]1)
+                        $writer.Write([UInt16]32)
+                        $writer.Write([UInt32]$pngBytes.Length)
+                        $writer.Write([UInt32]22)
+
+                        $writer.Write($pngBytes)
+                    }
+                    finally {
+                        $writer.Dispose()
+                    }
+                }
+                finally {
+                    $icoStream.Dispose()
+                }
+            }
+            finally {
+                $pngStream.Dispose()
+            }
+        }
+        finally {
+            $bitmap.Dispose()
+        }
+    }
+    finally {
+        $sourceImage.Dispose()
+    }
+}
+
 function Test-BinaryContainsAsciiText {
     param(
         [string]$Path,
@@ -165,6 +264,8 @@ if ($squirrelVersionInfo) {
 
 Copy-Item -LiteralPath $binaryFullPath -Destination (Join-Path $inputDir "aura.exe") -Force
 Copy-Item -LiteralPath $packageIconSourcePath -Destination (Join-Path $inputDir "tray.png") -Force
+$setupIconPath = Join-Path $inputDir "tray.ico"
+Convert-PngToIco -SourcePath (Join-Path $inputDir "tray.png") -DestinationPath $setupIconPath -Size 256
 
 & $nugetPath pack $nuspecPath -Version $Version -BasePath $inputDir -OutputDirectory $pkgDir -NoPackageAnalysis -NonInteractive
 if ($LASTEXITCODE -ne 0) {
@@ -185,7 +286,7 @@ if (-not $nupkgPath) {
     throw "No NuGet package was generated."
 }
 
-& $squirrelPath --releasify $nupkgPath --releaseDir $outputFullPath --no-msi
+& $squirrelPath --releasify $nupkgPath --releaseDir $outputFullPath --setupIcon $setupIconPath --no-msi
 if ($LASTEXITCODE -ne 0) {
     throw "Squirrel releasify failed."
 }
