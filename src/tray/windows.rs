@@ -332,6 +332,12 @@ fn create_notify_icon_data(hwnd: HWND, hinstance: HINSTANCE) -> NOTIFYICONDATAW 
 }
 
 unsafe fn show_context_menu(hwnd: HWND, data: &mut WindowData) {
+    let mut anchor_point: POINT = std::mem::zeroed();
+    if GetCursorPos(&mut anchor_point) == 0 {
+        tracing::warn!("GetCursorPos failed for tray menu");
+        return;
+    }
+
     loop {
         data.reopen_menu_requested = false;
         let menu = CreatePopupMenu();
@@ -510,18 +516,6 @@ unsafe fn show_context_menu(hwnd: HWND, data: &mut WindowData) {
             tracing::warn!("failed to add Exit tray menu item");
         }
 
-        let mut point: POINT = std::mem::zeroed();
-        if GetCursorPos(&mut point) == 0 {
-            tracing::warn!("GetCursorPos failed for tray menu");
-            DestroyMenu(menu);
-            cleanup_menu_icon_bitmap(next_background_icon);
-            cleanup_menu_icon_bitmap(refresh_icon);
-            cleanup_menu_icon_bitmap(reload_settings_icon);
-            cleanup_menu_icon_bitmap(settings_icon);
-            cleanup_menu_icon_bitmap(exit_icon);
-            return;
-        }
-
         let timer_started = if data.sticky_update_menu_active {
             data.last_app_update_status = app_update_value;
             SetTimer(
@@ -542,8 +536,8 @@ unsafe fn show_context_menu(hwnd: HWND, data: &mut WindowData) {
         let selected_command = TrackPopupMenu(
             menu,
             TPM_LEFTALIGN | TPM_RIGHTBUTTON | TPM_RETURNCMD,
-            point.x,
-            point.y,
+            anchor_point.x,
+            anchor_point.y,
             0,
             hwnd,
             ptr::null(),
