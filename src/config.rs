@@ -280,7 +280,7 @@ image = {{
 
 # Shader mode options (used when renderer = "shader")
 shader = {{
-	name = "gradient_glossy" # "gradient_glossy" | "limestone_cave" | "dither_asci_1" | "dither_asci_2"
+	name = "gradient_glossy" # "gradient_glossy" | "limestone_cave" | "dither_asci_1" | "dither_asci_2" | "silk"
 	target_fps = 50
 	mouse_enabled = false
 	quality = "low" # "vlow" | "low" | "medium" | "high"
