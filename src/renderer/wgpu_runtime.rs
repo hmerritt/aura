@@ -1,5 +1,5 @@
 use super::desktop_windows::DesktopRect;
-use crate::config::{ShaderColorSpace, ShaderConfig, ShaderPowerPreference};
+use crate::config::{ShaderColorSpace, ShaderConfig};
 use crate::errors::Result;
 use anyhow::{anyhow, bail, Context};
 use bytemuck::{Pod, Zeroable};
@@ -9,6 +9,10 @@ use std::time::Instant;
 use wgpu::util::DeviceExt;
 use winit::dpi::PhysicalSize;
 use winit::window::Window;
+
+const SHADER_POWER_PREFERENCE: wgpu::PowerPreference = wgpu::PowerPreference::LowPower;
+const SHADER_MAX_FRAME_LATENCY: u8 = 1;
+const SHADER_MEMORY_TARGET_MB: u64 = 80;
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
@@ -42,18 +46,13 @@ impl WgpuRuntime {
         shader_config: ShaderConfig,
         desktop_rect: DesktopRect,
     ) -> Result<Self> {
-        let quality_settings = shader_config.quality.settings();
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::default());
         let surface = instance
             .create_surface(window.clone())
             .map_err(|error| anyhow!("failed to create wgpu surface: {error}"))?;
 
-        let power_preference = match quality_settings.power_preference {
-            ShaderPowerPreference::LowPower => wgpu::PowerPreference::LowPower,
-            ShaderPowerPreference::HighPerformance => wgpu::PowerPreference::HighPerformance,
-        };
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference,
+            power_preference: SHADER_POWER_PREFERENCE,
             force_fallback_adapter: false,
             compatible_surface: Some(&surface),
         }))
@@ -102,27 +101,25 @@ impl WgpuRuntime {
             present_mode: wgpu::PresentMode::Fifo,
             alpha_mode,
             view_formats: vec![],
-            desired_maximum_frame_latency: u32::from(quality_settings.max_frame_latency),
+            desired_maximum_frame_latency: u32::from(SHADER_MAX_FRAME_LATENCY),
         };
 
         let estimated_bytes =
-            estimate_swapchain_memory_bytes(width, height, quality_settings.max_frame_latency);
+            estimate_swapchain_memory_bytes(width, height, SHADER_MAX_FRAME_LATENCY);
         let estimated_mb = bytes_to_megabytes(estimated_bytes);
         tracing::info!(
             width,
             height,
             desktop_scope = ?shader_config.desktop_scope,
-            quality = ?shader_config.quality,
-            power_preference = ?quality_settings.power_preference,
-            max_frame_latency = quality_settings.max_frame_latency,
-            memory_target_mb = quality_settings.memory_target_mb,
+            power_preference = ?SHADER_POWER_PREFERENCE,
+            max_frame_latency = SHADER_MAX_FRAME_LATENCY,
+            memory_target_mb = SHADER_MEMORY_TARGET_MB,
             estimated_swapchain_mb = estimated_mb,
             "shader runtime surface memory estimate"
         );
-        if estimated_mb > quality_settings.memory_target_mb as f64 {
+        if estimated_mb > SHADER_MEMORY_TARGET_MB as f64 {
             tracing::warn!(
-                quality = ?shader_config.quality,
-                memory_target_mb = quality_settings.memory_target_mb,
+                memory_target_mb = SHADER_MEMORY_TARGET_MB,
                 estimated_swapchain_mb = estimated_mb,
                 "shader swapchain estimate exceeds memory target; continuing shader mode"
             );

@@ -15,7 +15,6 @@ const DEFAULT_JPEG_QUALITY: u8 = 90;
 const DEFAULT_SHADER_TARGET_FPS: u16 = 60;
 const DEFAULT_SHADER_NAME: &str = "gradient_glossy";
 const LEGACY_SHADER_NAME: &str = "gradient_shader";
-const DEFAULT_SHADER_QUALITY: ShaderQualityPreset = ShaderQualityPreset::Medium;
 const DEFAULT_SHADER_COLOR_SPACE: ShaderColorSpace = ShaderColorSpace::Unorm;
 const DEFAULT_MAX_CACHE_MB: u64 = 1024;
 const DEFAULT_MAX_CACHE_AGE_DAYS: u64 = 30;
@@ -45,13 +44,6 @@ pub enum RendererMode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ShaderPowerPreference {
-    LowPower,
-    HighPerformance,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ShaderDesktopScope {
     Virtual,
@@ -65,55 +57,13 @@ pub enum ShaderColorSpace {
     Srgb,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ShaderQualityPreset {
-    Vlow,
-    Low,
-    Medium,
-    High,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ShaderQualitySettings {
-    pub memory_target_mb: u64,
-    pub power_preference: ShaderPowerPreference,
-    pub max_frame_latency: u8,
-}
-
-impl ShaderQualityPreset {
-    pub fn settings(self) -> ShaderQualitySettings {
-        match self {
-            Self::Vlow => ShaderQualitySettings {
-                memory_target_mb: 48,
-                power_preference: ShaderPowerPreference::LowPower,
-                max_frame_latency: 1,
-            },
-            Self::Low => ShaderQualitySettings {
-                memory_target_mb: 80,
-                power_preference: ShaderPowerPreference::LowPower,
-                max_frame_latency: 1,
-            },
-            Self::Medium => ShaderQualitySettings {
-                memory_target_mb: 100,
-                power_preference: ShaderPowerPreference::LowPower,
-                max_frame_latency: 2,
-            },
-            Self::High => ShaderQualitySettings {
-                memory_target_mb: 150,
-                power_preference: ShaderPowerPreference::HighPerformance,
-                max_frame_latency: 3,
-            },
-        }
-    }
-}
-
 #[derive(Debug, Clone, Deserialize)]
 struct RawShaderConfig {
     name: Option<String>,
     target_fps: Option<u16>,
     mouse_enabled: Option<bool>,
-    quality: Option<ShaderQualityPreset>,
+    #[serde(rename = "quality")]
+    _quality: Option<hcl::Value>,
     desktop_scope: Option<ShaderDesktopScope>,
     color_space: Option<ShaderColorSpace>,
     #[serde(rename = "memory_target_mb")]
@@ -246,7 +196,6 @@ pub struct ShaderConfig {
     pub name: String,
     pub target_fps: u16,
     pub mouse_enabled: bool,
-    pub quality: ShaderQualityPreset,
     pub desktop_scope: ShaderDesktopScope,
     pub color_space: ShaderColorSpace,
 }
@@ -293,7 +242,6 @@ shader = {{
 	name = "gradient_glossy" # "gradient_glossy" | "limestone_cave" | "dither_asci_1" | "dither_asci_2" | "dither_warp" | "silk"
 	target_fps = 50
 	mouse_enabled = false
-	quality = "low" # "vlow" | "low" | "medium" | "high"
 	desktop_scope = "virtual" # "virtual" | "primary"
 	color_space = "unorm" # "unorm" | "srgb"
 }}
@@ -471,7 +419,6 @@ fn parse_shader_config(
                 name: DEFAULT_SHADER_NAME.to_string(),
                 target_fps: DEFAULT_SHADER_TARGET_FPS,
                 mouse_enabled: false,
-                quality: DEFAULT_SHADER_QUALITY,
                 desktop_scope: ShaderDesktopScope::Virtual,
                 color_space: DEFAULT_SHADER_COLOR_SPACE,
             }));
@@ -502,7 +449,6 @@ fn parse_shader_config(
         name,
         target_fps,
         mouse_enabled: raw.mouse_enabled.unwrap_or(false),
-        quality: raw.quality.unwrap_or(DEFAULT_SHADER_QUALITY),
         desktop_scope: raw.desktop_scope.unwrap_or(ShaderDesktopScope::Virtual),
         color_space: raw.color_space.unwrap_or(DEFAULT_SHADER_COLOR_SPACE),
     }))
@@ -707,7 +653,6 @@ image = {{
 
         let raw = default_hcl(&pictures);
         assert!(raw.contains("name = \"gradient_glossy\""));
-        assert!(raw.contains("quality = \"low\""));
         assert!(raw.contains("color_space = \"unorm\""));
         assert!(raw.contains("updater = {"));
         let cfg = parse_from_str(&raw, &tmp.path().join("aura.hcl")).unwrap();
@@ -747,6 +692,7 @@ image = {{
 }}
 shader = {{
   name = "gradient_glossy"
+  quality = "ultra"
   memory_target_mb = 9999
   power_preference = "not_a_real_mode"
   max_frame_latency = 99
@@ -765,7 +711,6 @@ shader = {{
         assert_eq!(shader.name, "gradient_glossy");
         assert_eq!(shader.target_fps, 75);
         assert!(shader.mouse_enabled);
-        assert_eq!(shader.quality, DEFAULT_SHADER_QUALITY);
         assert_eq!(shader.desktop_scope, ShaderDesktopScope::Virtual);
         assert_eq!(shader.color_space, ShaderColorSpace::Unorm);
     }
@@ -792,13 +737,12 @@ shader = {{
         let cfg = parse_from_str(&raw, &tmp.path().join("aura.hcl")).unwrap();
         let shader = cfg.shader.expect("shader config should exist");
         assert_eq!(shader.name, "gradient_glossy");
-        assert_eq!(shader.quality, DEFAULT_SHADER_QUALITY);
         assert_eq!(shader.desktop_scope, ShaderDesktopScope::Virtual);
         assert_eq!(shader.color_space, ShaderColorSpace::Unorm);
     }
 
     #[test]
-    fn parses_shader_quality_and_desktop_scope() {
+    fn parses_shader_desktop_scope() {
         let tmp = tempdir().unwrap();
         let dir = tmp.path().join("imgs");
         fs::create_dir_all(&dir).unwrap();
@@ -811,7 +755,6 @@ image = {{
 }}
 shader = {{
   name = "gradient_glossy"
-  quality = "high"
   desktop_scope = "primary"
 }}
 "#,
@@ -820,13 +763,12 @@ shader = {{
 
         let cfg = parse_from_str(&raw, &tmp.path().join("aura.hcl")).unwrap();
         let shader = cfg.shader.expect("shader config should exist");
-        assert_eq!(shader.quality, ShaderQualityPreset::High);
         assert_eq!(shader.desktop_scope, ShaderDesktopScope::Primary);
         assert_eq!(shader.color_space, ShaderColorSpace::Unorm);
     }
 
     #[test]
-    fn rejects_invalid_shader_quality_options() {
+    fn ignores_shader_quality_options() {
         let tmp = tempdir().unwrap();
         let dir = tmp.path().join("imgs");
         fs::create_dir_all(&dir).unwrap();
@@ -843,7 +785,11 @@ shader = {{
 "#,
             hcl_path(&dir)
         );
-        assert!(parse_from_str(&raw, &tmp.path().join("aura.hcl")).is_err());
+        let cfg = parse_from_str(&raw, &tmp.path().join("aura.hcl")).unwrap();
+        let shader = cfg.shader.expect("shader config should exist");
+        assert_eq!(shader.name, "gradient_glossy");
+        assert_eq!(shader.desktop_scope, ShaderDesktopScope::Virtual);
+        assert_eq!(shader.color_space, ShaderColorSpace::Unorm);
     }
 
     #[test]
@@ -889,32 +835,6 @@ shader = {{
             hcl_path(&dir)
         );
         assert!(parse_from_str(&raw, &tmp.path().join("aura.hcl")).is_err());
-    }
-
-    #[test]
-    fn shader_quality_settings_match_expected_values() {
-        let vlow = ShaderQualityPreset::Vlow.settings();
-        assert_eq!(vlow.memory_target_mb, 48);
-        assert_eq!(vlow.power_preference, ShaderPowerPreference::LowPower);
-        assert_eq!(vlow.max_frame_latency, 1);
-
-        let low = ShaderQualityPreset::Low.settings();
-        assert_eq!(low.memory_target_mb, 80);
-        assert_eq!(low.power_preference, ShaderPowerPreference::LowPower);
-        assert_eq!(low.max_frame_latency, 1);
-
-        let medium = ShaderQualityPreset::Medium.settings();
-        assert_eq!(medium.memory_target_mb, 100);
-        assert_eq!(medium.power_preference, ShaderPowerPreference::LowPower);
-        assert_eq!(medium.max_frame_latency, 2);
-
-        let high = ShaderQualityPreset::High.settings();
-        assert_eq!(high.memory_target_mb, 150);
-        assert_eq!(
-            high.power_preference,
-            ShaderPowerPreference::HighPerformance
-        );
-        assert_eq!(high.max_frame_latency, 3);
     }
 
     #[test]
