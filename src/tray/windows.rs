@@ -4,7 +4,6 @@ use crate::updater::UpdaterStatus;
 use crate::version;
 use anyhow::{anyhow, bail};
 use std::mem::size_of;
-use std::path::PathBuf;
 use std::ptr;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
@@ -22,8 +21,7 @@ use windows_sys::Win32::Graphics::Gdi::{
 use windows_sys::Win32::System::LibraryLoader::{FindResourceW, GetModuleHandleW};
 use windows_sys::Win32::System::Threading::CreateMutexW;
 use windows_sys::Win32::UI::Shell::{
-    ShellExecuteW, Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE,
-    NOTIFYICONDATAW,
+    Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NOTIFYICONDATAW,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow, DispatchMessageW,
@@ -32,9 +30,9 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     SetWindowLongPtrW, TrackPopupMenu, TranslateMessage, DI_NORMAL, GWLP_USERDATA, HICON,
     IDI_APPLICATION, IMAGE_BITMAP, IMAGE_ICON, LR_CREATEDIBSECTION, LR_DEFAULTSIZE, LR_SHARED,
     MENUITEMINFOW, MFS_DISABLED, MFT_SEPARATOR, MFT_STRING, MIIM_BITMAP, MIIM_FTYPE, MIIM_ID,
-    MIIM_STATE, MIIM_STRING, MSG, PM_REMOVE, SW_SHOWNORMAL, TPM_LEFTALIGN, TPM_NOANIMATION,
-    TPM_RETURNCMD, TPM_RIGHTBUTTON, WM_APP, WM_LBUTTONDBLCLK, WM_NCCREATE, WM_NCDESTROY, WM_NULL,
-    WM_RBUTTONUP, WM_TIMER, WNDCLASSW, WS_EX_NOACTIVATE,
+    MIIM_STATE, MIIM_STRING, MSG, PM_REMOVE, TPM_LEFTALIGN, TPM_NOANIMATION, TPM_RETURNCMD,
+    TPM_RIGHTBUTTON, WM_APP, WM_LBUTTONDBLCLK, WM_NCCREATE, WM_NCDESTROY, WM_NULL, WM_RBUTTONUP,
+    WM_TIMER, WNDCLASSW, WS_EX_NOACTIVATE,
 };
 
 const TRAY_ICON_ID: u32 = 1;
@@ -110,7 +108,6 @@ impl Drop for TrayController {
 }
 
 pub fn spawn(
-    config_path: PathBuf,
     event_tx: UnboundedSender<TrayEvent>,
     session_stats: Arc<SessionStats>,
 ) -> Result<TrayController> {
@@ -118,9 +115,7 @@ pub fn spawn(
     let (ready_tx, ready_rx) = mpsc::channel::<Result<()>>();
 
     let join_handle = thread::spawn(move || {
-        if let Err(error) =
-            run_tray_loop(config_path, event_tx, session_stats, shutdown_rx, ready_tx)
-        {
+        if let Err(error) = run_tray_loop(event_tx, session_stats, shutdown_rx, ready_tx) {
             tracing::error!(error = %error, "tray loop failed");
         }
     });
@@ -138,7 +133,6 @@ pub fn spawn(
 
 struct WindowData {
     event_tx: UnboundedSender<TrayEvent>,
-    config_path_wide: Vec<u16>,
     session_stats: Arc<SessionStats>,
     hinstance: HINSTANCE,
     sticky_update_menu_active: bool,
@@ -150,7 +144,6 @@ struct WindowData {
 }
 
 fn run_tray_loop(
-    config_path: PathBuf,
     event_tx: UnboundedSender<TrayEvent>,
     session_stats: Arc<SessionStats>,
     shutdown_rx: Receiver<()>,
@@ -171,14 +164,8 @@ fn run_tray_loop(
         return Ok(());
     }
 
-    let config_abs = config_path
-        .canonicalize()
-        .unwrap_or(config_path)
-        .to_string_lossy()
-        .to_string();
     let user_data = Box::new(WindowData {
         event_tx,
-        config_path_wide: wide_null(&config_abs),
         session_stats: session_stats.clone(),
         hinstance,
         sticky_update_menu_active: false,
@@ -570,7 +557,7 @@ unsafe fn show_context_menu(hwnd: HWND, data: &mut WindowData) {
             KillTimer(hwnd, TRAY_MENU_REFRESH_TIMER_ID);
         }
         if selected_command != 0 {
-            handle_tray_command(hwnd, data, selected_command as u32);
+            handle_tray_command(data, selected_command as u32);
         }
         PostMessageW(hwnd, WM_NULL, 0, 0);
 
@@ -590,7 +577,7 @@ unsafe fn show_context_menu(hwnd: HWND, data: &mut WindowData) {
     }
 }
 
-unsafe fn handle_tray_command(hwnd: HWND, data: &mut WindowData, command_id: u32) {
+unsafe fn handle_tray_command(data: &mut WindowData, command_id: u32) {
     match command_id {
         TRAY_COMMAND_NEXT_BACKGROUND => {
             let _ = data.event_tx.send(TrayEvent::NextWallpaper);
@@ -608,27 +595,12 @@ unsafe fn handle_tray_command(hwnd: HWND, data: &mut WindowData, command_id: u32
             let _ = data.event_tx.send(TrayEvent::CheckForUpdates);
         }
         TRAY_COMMAND_SETTINGS => {
-            open_settings_from_tray(hwnd, data);
+            let _ = data.event_tx.send(TrayEvent::OpenSettingsWindow);
         }
         TRAY_COMMAND_EXIT => {
             let _ = data.event_tx.send(TrayEvent::Exit);
         }
         _ => {}
-    }
-}
-
-unsafe fn open_settings_from_tray(hwnd: HWND, data: &WindowData) {
-    let operation = wide_null("open");
-    let result = ShellExecuteW(
-        hwnd,
-        operation.as_ptr(),
-        data.config_path_wide.as_ptr(),
-        ptr::null(),
-        ptr::null(),
-        SW_SHOWNORMAL,
-    );
-    if (result as isize) <= 32 {
-        tracing::warn!("failed to open config from tray settings");
     }
 }
 

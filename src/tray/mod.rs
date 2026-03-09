@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 pub enum TrayEvent {
     NextWallpaper,
     ReloadSettings,
+    OpenSettingsWindow,
     CheckForUpdates,
     Exit,
 }
@@ -205,8 +206,6 @@ pub struct SingleInstanceGuard;
 #[cfg(not(windows))]
 use crate::errors::Result;
 #[cfg(not(windows))]
-use std::path::PathBuf;
-#[cfg(not(windows))]
 use tokio::sync::mpsc::UnboundedSender;
 
 #[cfg(not(windows))]
@@ -216,7 +215,6 @@ pub fn try_acquire_single_instance() -> Result<Option<SingleInstanceGuard>> {
 
 #[cfg(not(windows))]
 pub fn spawn(
-    _config_path: PathBuf,
     _event_tx: UnboundedSender<TrayEvent>,
     _session_stats: std::sync::Arc<SessionStats>,
 ) -> Result<TrayController> {

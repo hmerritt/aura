@@ -12,6 +12,7 @@ mod logging;
 mod renderer;
 mod rotation;
 mod scheduler;
+mod settings_ui;
 mod sources;
 mod state;
 mod tray;
@@ -20,17 +21,22 @@ mod version;
 mod wallpaper;
 
 use crate::cache::CacheManager;
-use crate::config::{load_from_path_with_warnings, ConfigWarning, RendererMode, ShaderConfig};
+use crate::config::{
+    load_from_path_with_warnings, ConfigWarning, RendererMode, SettingsDocument, ShaderConfig,
+};
 use crate::errors::Result;
 use crate::installer::{SquirrelEvent, StartupRegistrationStatus};
 use crate::renderer::{RendererEvent, ShaderRenderer};
 use crate::rotation::RotationManager;
 use crate::scheduler::{Scheduler, SchedulerEvent};
+use crate::settings_ui::{SettingsUiController, SettingsUiEvent};
 use crate::sources::{build_sources, ImageCandidate, ImageSource, Origin, SourceKind};
 use crate::state::{PersistedState, StateStore};
 use crate::tray::{format_config_duration, SessionStats, TrayEvent};
 use crate::updater::{RestartContext, UpdateTrigger, UpdaterEvent, UpdaterStatus};
 use anyhow::Context;
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 use std::collections::HashSet;
 use std::env;
 use std::fs;
@@ -62,6 +68,24 @@ struct CliOptions {
     debug_terminal: bool,
     print_version: bool,
     squirrel_event: Option<SquirrelEvent>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SettingsUiRequestEnvelope {
+    id: Option<String>,
+    command: String,
+    #[serde(default)]
+    payload: Value,
+}
+
+#[derive(Debug, Serialize)]
+struct SettingsUiResponseEnvelope {
+    id: Option<String>,
+    ok: bool,
+    command: String,
+    payload: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
 }
 
 #[tokio::main]
@@ -211,6 +235,9 @@ async fn run(args: Vec<String>, debug_requested: bool) -> Result<()> {
     session_stats.set_total_images(local_images_count + remote_images_count);
 
     let (tray_event_tx, mut tray_event_rx) = tokio::sync::mpsc::unbounded_channel::<TrayEvent>();
+    let (settings_ui_event_tx, mut settings_ui_event_rx) =
+        tokio::sync::mpsc::unbounded_channel::<SettingsUiEvent>();
+    let mut settings_ui_controller: Option<SettingsUiController> = None;
     let mut _single_instance_guard = None;
     let mut _tray_controller = None;
     if options.tray_enabled && cfg!(windows) {
@@ -222,11 +249,7 @@ async fn run(args: Vec<String>, debug_requested: bool) -> Result<()> {
             }
         };
 
-        _tray_controller = Some(tray::spawn(
-            config_path.clone(),
-            tray_event_tx.clone(),
-            session_stats.clone(),
-        )?);
+        _tray_controller = Some(tray::spawn(tray_event_tx.clone(), session_stats.clone())?);
         info!("tray mode enabled");
     }
 
@@ -393,6 +416,71 @@ async fn run(args: Vec<String>, debug_requested: bool) -> Result<()> {
                     }
                 }
             }
+            settings_ui_event = settings_ui_event_rx.recv() => {
+                if let Some(settings_ui_event) = settings_ui_event {
+                    match settings_ui_event {
+                        SettingsUiEvent::IpcMessage(raw_message) => {
+                            let restart_requested = handle_settings_ui_message(
+                                &mut settings_ui_controller,
+                                raw_message,
+                                &config_path,
+                                &mut config,
+                                &mut cache,
+                                &mut sources,
+                                &*backend,
+                                &mut state_store,
+                                &mut rotation,
+                                &session_stats,
+                                &mut scheduler,
+                                &mut renderer,
+                                &mut renderer_event_rx,
+                                &mut active_mode,
+                                &mut local_images_count,
+                                &mut remote_images_count,
+                                &mut updater_runtime,
+                                &mut updater_event_rx,
+                                &mut updater_restart_context,
+                                &mut updater_operation_in_progress,
+                                &mut startup_update_check_deadline,
+                                &mut updater_interval,
+                                restart_pending_on_next_switch,
+                                &mut last_image_id,
+                                &mut _single_instance_guard,
+                                &relaunch_args,
+                            ).await;
+
+                            match restart_requested {
+                                Ok(true) => {
+                                    stop_renderer(&mut renderer, "restart after settings UI save").await;
+                                    break;
+                                }
+                                Ok(false) => {}
+                                Err(error) => {
+                                    warn!(error = %error, "settings UI request failed");
+                                    send_settings_ui_response(
+                                        settings_ui_controller.as_ref(),
+                                        SettingsUiResponseEnvelope {
+                                            id: None,
+                                            ok: false,
+                                            command: "internal_error".to_string(),
+                                            payload: json!({}),
+                                            error: Some(error.to_string()),
+                                        },
+                                    );
+                                }
+                            }
+                        }
+                        SettingsUiEvent::OpenFailed { message } => {
+                            warn!(message = %message, "settings UI failed");
+                            settings_ui_controller = None;
+                            crash_ui::show_error_dialog(
+                                "Aura Settings",
+                                &format!("Failed to open the settings UI.\n\n{message}"),
+                            );
+                        }
+                    }
+                }
+            }
             tray_event = tray_event_rx.recv() => {
                 match tray_event {
                     Some(TrayEvent::NextWallpaper) => {
@@ -440,229 +528,67 @@ async fn run(args: Vec<String>, debug_requested: bool) -> Result<()> {
                     }
                     Some(TrayEvent::ReloadSettings) => {
                         info!("tray requested settings reload");
-
-                        let loaded_config = match load_from_path_with_warnings(&config_path) {
-                            Ok(loaded_config) => loaded_config,
+                        match reload_runtime_from_disk(
+                            &config_path,
+                            &mut config,
+                            &mut cache,
+                            &mut sources,
+                            &*backend,
+                            &mut state_store,
+                            &mut rotation,
+                            &session_stats,
+                            &mut scheduler,
+                            &mut renderer,
+                            &mut renderer_event_rx,
+                            &mut active_mode,
+                            &mut local_images_count,
+                            &mut remote_images_count,
+                            &mut updater_runtime,
+                            &mut updater_event_rx,
+                            &mut updater_restart_context,
+                            &mut updater_operation_in_progress,
+                            &mut startup_update_check_deadline,
+                            &mut updater_interval,
+                            restart_pending_on_next_switch,
+                            &mut last_image_id,
+                            &mut _single_instance_guard,
+                            &relaunch_args,
+                        ).await {
+                            Ok(true) => {
+                                stop_renderer(&mut renderer, "restart after settings reload").await;
+                                break;
+                            }
+                            Ok(false) => {}
                             Err(error) => {
                                 warn!(error = %error, "failed to reload config; keeping current runtime settings");
-                                continue;
                             }
-                        };
-                        log_config_warnings(&loaded_config.warnings);
-                        let new_config = loaded_config.config;
-
-                        let new_cache = match CacheManager::new(&new_config) {
-                            Ok(new_cache) => Arc::new(new_cache),
-                            Err(error) => {
-                                warn!(error = %error, "failed to initialize cache from reloaded config; keeping current runtime settings");
-                                continue;
-                            }
-                        };
-                        if let Err(error) = new_cache.cleanup() {
-                            warn!(error = %error, "cache cleanup failed after settings reload");
                         }
-
-                        let mut new_sources = match build_sources(&new_config, new_cache.clone()) {
-                            Ok(new_sources) => new_sources,
-                            Err(error) => {
-                                warn!(error = %error, "failed to build sources from reloaded config; keeping current runtime settings");
-                                continue;
-                            }
-                        };
-
-                        let refreshed_candidates = match refresh_all_sources(&mut new_sources).await {
-                            Ok(candidates) => candidates,
-                            Err(error) => {
-                                warn!(error = %error, "failed to refresh sources after settings reload; keeping current runtime settings");
-                                continue;
-                            }
-                        };
-
-                        let (next_local_count, next_remote_count) =
-                            count_images_by_origin(&refreshed_candidates);
-                        let mut preserved_state = rotation.export_state();
-                        preserved_state.last_image_id = last_image_id.clone();
-                        rotation.rebuild_pool(refreshed_candidates);
-                        rotation.restore_state(&preserved_state);
-
-                        let current_shader_config = config.shader.clone();
-                        let renderer_action = determine_reload_renderer_action(
-                            active_mode,
-                            renderer.is_some(),
-                            current_shader_config.as_ref(),
-                            &new_config,
-                        );
-
-                        config = new_config;
-                        cache = new_cache;
-                        sources = new_sources;
-                        state_store = StateStore::new(config.state_file.clone());
-                        scheduler =
-                            Scheduler::new(config.image.timer, config.image.remote_update_timer);
-                        local_images_count = next_local_count;
-                        remote_images_count = next_remote_count;
-                        session_stats.set_total_images(local_images_count + remote_images_count);
-                        session_stats.set_timer_display(format_config_duration(config.image.timer));
-                        session_stats.set_remote_update_timer_display(format_config_duration(
-                            config.image.remote_update_timer,
-                        ));
-                        logging::set_level(&config.log_level);
-
-                        updater_runtime = updater::initialize(&config.updater, relaunch_args.clone());
-                        updater_event_rx = updater_runtime.take_event_receiver();
-                        updater_restart_context = updater_runtime.restart_context();
-                        updater_operation_in_progress = false;
-                        startup_update_check_deadline = None;
-                        updater_interval = updater_runtime.check_interval().map(|check_interval| {
-                            let mut interval = tokio::time::interval_at(
-                                tokio::time::Instant::now() + check_interval,
-                                check_interval,
-                            );
-                            interval
-                                .set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-                            interval
-                        });
-                        session_stats
-                            .set_app_update_status(updater_runtime.status().label().to_string());
-                        if updater_runtime.status() == UpdaterStatus::Idle {
-                            let _ = request_update_check(
-                                &updater_runtime,
-                                &mut updater_operation_in_progress,
-                                UpdateTrigger::Startup,
-                            );
-                        }
-
-                        match renderer_action {
-                            ReloadRendererAction::KeepImageMode => {
-                                session_stats.set_shader_active(false);
-                                session_stats.set_shader_name(String::new());
-                            }
-                            ReloadRendererAction::KeepCurrentShader => {
-                                if config.shader.is_none() {
-                                    config.shader = current_shader_config.clone();
-                                    warn!("reloaded config omitted shader settings while shader mode is active; keeping current shader runtime");
+                    }
+                    Some(TrayEvent::OpenSettingsWindow) => {
+                        if settings_ui_controller.is_none() {
+                            match SettingsUiController::spawn(settings_ui_event_tx.clone()) {
+                                Ok(controller) => settings_ui_controller = Some(controller),
+                                Err(error) => {
+                                    warn!(error = %error, "failed to start settings UI controller");
+                                    crash_ui::show_error_dialog(
+                                        "Aura Settings",
+                                        &format!("Failed to start the settings UI.\n\n{error:#}"),
+                                    );
+                                    continue;
                                 }
-                                session_stats.set_shader_active(true);
-                                session_stats.set_shader_name(
-                                    config
-                                        .shader
-                                        .as_ref()
-                                        .map(|shader| shader.name.clone())
-                                        .unwrap_or_default(),
+                            }
+                        }
+
+                        if let Some(controller) = settings_ui_controller.as_ref() {
+                            if let Err(error) = controller.open_window() {
+                                warn!(error = %error, "failed to open settings window");
+                                settings_ui_controller = None;
+                                crash_ui::show_error_dialog(
+                                    "Aura Settings",
+                                    &format!("Failed to open the settings UI.\n\n{error:#}"),
                                 );
-                                info!("settings reload left live shader configuration unchanged");
-                            }
-                            ReloadRendererAction::StopShader => {
-                                stop_renderer(&mut renderer, "settings reload switched runtime to image mode").await;
-                                renderer = None;
-                                renderer_event_rx = None;
-                                active_mode = ActiveMode::Image;
-                                session_stats.set_shader_active(false);
-                                session_stats.set_shader_name(String::new());
-                                info!("settings reload switched runtime to image mode");
-                            }
-                            ReloadRendererAction::StartShader(shader_config) => {
-                                stop_renderer(&mut renderer, "settings reload restarting shader mode").await;
-                                renderer = None;
-                                renderer_event_rx = None;
-                                active_mode = ActiveMode::Image;
-                                session_stats.set_shader_active(false);
-                                session_stats.set_shader_name(String::new());
-
-                                let shader_name = shader_config.name.clone();
-                                match ShaderRenderer::start(shader_config) {
-                                    Ok(mut new_renderer) => {
-                                        renderer_event_rx = new_renderer.take_event_receiver();
-                                        renderer = Some(new_renderer);
-                                        active_mode = ActiveMode::Shader;
-                                        session_stats.set_shader_active(true);
-                                        session_stats.set_shader_name(shader_name);
-                                        info!("settings reload switched runtime to shader mode");
-                                    }
-                                    Err(error) => {
-                                        warn!(error = %error, "failed to start shader mode from reloaded settings");
-                                    }
-                                }
-                            }
-                            ReloadRendererAction::ApplyShaderConfig(shader_config) => {
-                                let shader_name = shader_config.name.clone();
-                                match renderer.as_ref() {
-                                    Some(renderer) => match renderer.apply_config(shader_config).await {
-                                        Ok(()) => {
-                                            active_mode = ActiveMode::Shader;
-                                            session_stats.set_shader_active(true);
-                                            session_stats.set_shader_name(shader_name);
-                                            info!("settings reload updated live shader configuration");
-                                        }
-                                        Err(error) => {
-                                            config.shader = current_shader_config.clone();
-                                            session_stats.set_shader_active(true);
-                                            session_stats.set_shader_name(
-                                                current_shader_config
-                                                    .as_ref()
-                                                    .map(|shader| shader.name.clone())
-                                                    .unwrap_or_default(),
-                                            );
-                                            warn!(error = %error, "failed to apply reloaded shader settings; keeping current shader runtime");
-                                        }
-                                    },
-                                    None => {
-                                        warn!("shader reload requested a live config update but no renderer was active; attempting a fresh shader start");
-                                        if let Some(shader_config) = config.shader.clone() {
-                                            let shader_name = shader_config.name.clone();
-                                            match ShaderRenderer::start(shader_config) {
-                                                Ok(mut new_renderer) => {
-                                                    renderer_event_rx = new_renderer.take_event_receiver();
-                                                    renderer = Some(new_renderer);
-                                                    active_mode = ActiveMode::Shader;
-                                                    session_stats.set_shader_active(true);
-                                                    session_stats.set_shader_name(shader_name);
-                                                    info!("settings reload recovered shader mode with a fresh renderer start");
-                                                }
-                                                Err(error) => {
-                                                    active_mode = ActiveMode::Image;
-                                                    session_stats.set_shader_active(false);
-                                                    session_stats.set_shader_name(String::new());
-                                                    warn!(error = %error, "failed to recover shader mode after missing renderer during settings reload");
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
                             }
                         }
-
-                        if active_mode == ActiveMode::Image {
-                            match try_switch_once(&mut rotation, cache.as_ref(), &*backend, &config).await {
-                                Ok(Some(next_id)) => {
-                                    session_stats.inc_images_shown();
-                                    last_image_id = Some(next_id);
-                                }
-                                Ok(None) => warn!("settings reload kept image mode but no image was available"),
-                                Err(error) => warn!(error = %error, "failed to apply wallpaper after settings reload"),
-                            }
-                        }
-
-                        if restart_pending_on_next_switch
-                            && active_mode == ActiveMode::Shader
-                            && restart_after_update(
-                                updater_restart_context.as_ref(),
-                                &state_store,
-                                &rotation,
-                                last_image_id.clone(),
-                                &mut _single_instance_guard,
-                            )
-                        {
-                            stop_renderer(&mut renderer, "restart after settings reload").await;
-                            break;
-                        }
-
-                        if let Err(error) =
-                            persist_state(&state_store, &rotation, last_image_id.clone())
-                        {
-                            warn!(error = %error, "failed to persist state after settings reload");
-                        }
-                        info!("settings reload complete");
                     }
                     Some(TrayEvent::CheckForUpdates) => {
                         let _ = request_update_check(
@@ -761,6 +687,512 @@ async fn stop_renderer(renderer: &mut Option<ShaderRenderer>, action: &str) {
             warn!(error = %error, action, "failed to stop shader renderer");
         }
     }
+}
+
+async fn handle_settings_ui_message(
+    settings_ui_controller: &mut Option<SettingsUiController>,
+    raw_message: String,
+    config_path: &Path,
+    config: &mut config::AuraConfig,
+    cache: &mut Arc<CacheManager>,
+    sources: &mut Vec<Box<dyn ImageSource>>,
+    backend: &dyn wallpaper::WallpaperBackend,
+    state_store: &mut StateStore,
+    rotation: &mut RotationManager,
+    session_stats: &Arc<SessionStats>,
+    scheduler: &mut Scheduler,
+    renderer: &mut Option<ShaderRenderer>,
+    renderer_event_rx: &mut Option<tokio::sync::mpsc::UnboundedReceiver<RendererEvent>>,
+    active_mode: &mut ActiveMode,
+    local_images_count: &mut u64,
+    remote_images_count: &mut u64,
+    updater_runtime: &mut updater::UpdaterRuntime,
+    updater_event_rx: &mut Option<tokio::sync::mpsc::UnboundedReceiver<UpdaterEvent>>,
+    updater_restart_context: &mut Option<RestartContext>,
+    updater_operation_in_progress: &mut bool,
+    startup_update_check_deadline: &mut Option<tokio::time::Instant>,
+    updater_interval: &mut Option<tokio::time::Interval>,
+    restart_pending_on_next_switch: bool,
+    last_image_id: &mut Option<String>,
+    single_instance_guard: &mut Option<tray::SingleInstanceGuard>,
+    relaunch_args: &[String],
+) -> Result<bool> {
+    let request = match serde_json::from_str::<SettingsUiRequestEnvelope>(&raw_message) {
+        Ok(request) => request,
+        Err(error) => {
+            send_settings_ui_response(
+                settings_ui_controller.as_ref(),
+                SettingsUiResponseEnvelope {
+                    id: None,
+                    ok: false,
+                    command: "invalid_request".to_string(),
+                    payload: json!({}),
+                    error: Some(format!("invalid settings UI message: {error}")),
+                },
+            );
+            return Ok(false);
+        }
+    };
+
+    match request.command.as_str() {
+        "bootstrap" => {
+            send_settings_ui_response(
+                settings_ui_controller.as_ref(),
+                SettingsUiResponseEnvelope {
+                    id: request.id,
+                    ok: true,
+                    command: "bootstrap".to_string(),
+                    payload: json!({
+                        "version": version::get_version().full_version_number(true),
+                        "configPath": config_path.display().to_string(),
+                        "devServerEnv": "AURA_SETTINGS_UI_DEV_URL",
+                    }),
+                    error: None,
+                },
+            );
+            Ok(false)
+        }
+        "load_settings" => {
+            match config::load_settings_document(config_path) {
+                Ok(result) => send_settings_ui_response(
+                    settings_ui_controller.as_ref(),
+                    SettingsUiResponseEnvelope {
+                        id: request.id,
+                        ok: true,
+                        command: "load_settings".to_string(),
+                        payload: json!(result),
+                        error: None,
+                    },
+                ),
+                Err(error) => send_settings_ui_response(
+                    settings_ui_controller.as_ref(),
+                    SettingsUiResponseEnvelope {
+                        id: request.id,
+                        ok: false,
+                        command: "load_settings".to_string(),
+                        payload: json!({}),
+                        error: Some(error.to_string()),
+                    },
+                ),
+            }
+            Ok(false)
+        }
+        "validate_settings" => {
+            match serde_json::from_value::<SettingsDocument>(request.payload) {
+                Ok(document) => match config::validate_settings_document(&document, config_path) {
+                    Ok(result) => send_settings_ui_response(
+                        settings_ui_controller.as_ref(),
+                        SettingsUiResponseEnvelope {
+                            id: request.id,
+                            ok: true,
+                            command: "validate_settings".to_string(),
+                            payload: json!(result),
+                            error: None,
+                        },
+                    ),
+                    Err(error) => send_settings_ui_response(
+                        settings_ui_controller.as_ref(),
+                        SettingsUiResponseEnvelope {
+                            id: request.id,
+                            ok: false,
+                            command: "validate_settings".to_string(),
+                            payload: json!({}),
+                            error: Some(error.to_string()),
+                        },
+                    ),
+                },
+                Err(error) => send_settings_ui_response(
+                    settings_ui_controller.as_ref(),
+                    SettingsUiResponseEnvelope {
+                        id: request.id,
+                        ok: false,
+                        command: "validate_settings".to_string(),
+                        payload: json!({}),
+                        error: Some(format!("invalid settings document payload: {error}")),
+                    },
+                ),
+            }
+            Ok(false)
+        }
+        "save_settings" => match serde_json::from_value::<SettingsDocument>(request.payload) {
+            Ok(document) => match config::validate_settings_document(&document, config_path) {
+                Ok(validation) if validation.warnings.is_empty() => {
+                    if let Err(error) = config::save_settings_document(config_path, &document) {
+                        send_settings_ui_response(
+                            settings_ui_controller.as_ref(),
+                            SettingsUiResponseEnvelope {
+                                id: request.id,
+                                ok: false,
+                                command: "save_settings".to_string(),
+                                payload: json!({}),
+                                error: Some(error.to_string()),
+                            },
+                        );
+                        return Ok(false);
+                    }
+
+                    let restart_requested = reload_runtime_from_disk(
+                        config_path,
+                        config,
+                        cache,
+                        sources,
+                        backend,
+                        state_store,
+                        rotation,
+                        session_stats,
+                        scheduler,
+                        renderer,
+                        renderer_event_rx,
+                        active_mode,
+                        local_images_count,
+                        remote_images_count,
+                        updater_runtime,
+                        updater_event_rx,
+                        updater_restart_context,
+                        updater_operation_in_progress,
+                        startup_update_check_deadline,
+                        updater_interval,
+                        restart_pending_on_next_switch,
+                        last_image_id,
+                        single_instance_guard,
+                        relaunch_args,
+                    )
+                    .await?;
+
+                    match config::load_settings_document(config_path) {
+                        Ok(result) => send_settings_ui_response(
+                            settings_ui_controller.as_ref(),
+                            SettingsUiResponseEnvelope {
+                                id: request.id,
+                                ok: true,
+                                command: "save_settings".to_string(),
+                                payload: json!({
+                                    "result": result,
+                                    "restartRequested": restart_requested,
+                                }),
+                                error: None,
+                            },
+                        ),
+                        Err(error) => send_settings_ui_response(
+                            settings_ui_controller.as_ref(),
+                            SettingsUiResponseEnvelope {
+                                id: request.id,
+                                ok: false,
+                                command: "save_settings".to_string(),
+                                payload: json!({}),
+                                error: Some(error.to_string()),
+                            },
+                        ),
+                    }
+                    Ok(restart_requested)
+                }
+                Ok(validation) => {
+                    send_settings_ui_response(
+                        settings_ui_controller.as_ref(),
+                        SettingsUiResponseEnvelope {
+                            id: request.id,
+                            ok: false,
+                            command: "save_settings".to_string(),
+                            payload: json!(validation),
+                            error: Some(
+                                "settings document contains validation warnings".to_string(),
+                            ),
+                        },
+                    );
+                    Ok(false)
+                }
+                Err(error) => {
+                    send_settings_ui_response(
+                        settings_ui_controller.as_ref(),
+                        SettingsUiResponseEnvelope {
+                            id: request.id,
+                            ok: false,
+                            command: "save_settings".to_string(),
+                            payload: json!({}),
+                            error: Some(error.to_string()),
+                        },
+                    );
+                    Ok(false)
+                }
+            },
+            Err(error) => {
+                send_settings_ui_response(
+                    settings_ui_controller.as_ref(),
+                    SettingsUiResponseEnvelope {
+                        id: request.id,
+                        ok: false,
+                        command: "save_settings".to_string(),
+                        payload: json!({}),
+                        error: Some(format!("invalid settings document payload: {error}")),
+                    },
+                );
+                Ok(false)
+            }
+        },
+        "close_window" => {
+            if let Some(controller) = settings_ui_controller.as_ref() {
+                controller.close_window()?;
+            }
+            Ok(false)
+        }
+        _ => {
+            send_settings_ui_response(
+                settings_ui_controller.as_ref(),
+                SettingsUiResponseEnvelope {
+                    id: request.id,
+                    ok: false,
+                    command: request.command,
+                    payload: json!({}),
+                    error: Some("unknown settings UI command".to_string()),
+                },
+            );
+            Ok(false)
+        }
+    }
+}
+
+fn send_settings_ui_response(
+    settings_ui_controller: Option<&SettingsUiController>,
+    response: SettingsUiResponseEnvelope,
+) {
+    let Some(controller) = settings_ui_controller else {
+        return;
+    };
+    match serde_json::to_string(&response) {
+        Ok(json) => {
+            if let Err(error) = controller.dispatch_json(json) {
+                warn!(error = %error, "failed to send settings UI response");
+            }
+        }
+        Err(error) => {
+            warn!(error = %error, "failed to serialize settings UI response");
+        }
+    }
+}
+
+async fn reload_runtime_from_disk(
+    config_path: &Path,
+    config: &mut config::AuraConfig,
+    cache: &mut Arc<CacheManager>,
+    sources: &mut Vec<Box<dyn ImageSource>>,
+    backend: &dyn wallpaper::WallpaperBackend,
+    state_store: &mut StateStore,
+    rotation: &mut RotationManager,
+    session_stats: &Arc<SessionStats>,
+    scheduler: &mut Scheduler,
+    renderer: &mut Option<ShaderRenderer>,
+    renderer_event_rx: &mut Option<tokio::sync::mpsc::UnboundedReceiver<RendererEvent>>,
+    active_mode: &mut ActiveMode,
+    local_images_count: &mut u64,
+    remote_images_count: &mut u64,
+    updater_runtime: &mut updater::UpdaterRuntime,
+    updater_event_rx: &mut Option<tokio::sync::mpsc::UnboundedReceiver<UpdaterEvent>>,
+    updater_restart_context: &mut Option<RestartContext>,
+    updater_operation_in_progress: &mut bool,
+    startup_update_check_deadline: &mut Option<tokio::time::Instant>,
+    updater_interval: &mut Option<tokio::time::Interval>,
+    restart_pending_on_next_switch: bool,
+    last_image_id: &mut Option<String>,
+    single_instance_guard: &mut Option<tray::SingleInstanceGuard>,
+    relaunch_args: &[String],
+) -> Result<bool> {
+    let loaded_config = load_from_path_with_warnings(config_path)?;
+    log_config_warnings(&loaded_config.warnings);
+    let new_config = loaded_config.config;
+
+    let new_cache = Arc::new(CacheManager::new(&new_config)?);
+    if let Err(error) = new_cache.cleanup() {
+        warn!(error = %error, "cache cleanup failed after settings reload");
+    }
+
+    let mut new_sources = build_sources(&new_config, new_cache.clone())?;
+    let refreshed_candidates = refresh_all_sources(&mut new_sources).await?;
+    let (next_local_count, next_remote_count) = count_images_by_origin(&refreshed_candidates);
+    let mut preserved_state = rotation.export_state();
+    preserved_state.last_image_id = last_image_id.clone();
+    rotation.rebuild_pool(refreshed_candidates);
+    rotation.restore_state(&preserved_state);
+
+    let current_shader_config = config.shader.clone();
+    let renderer_action = determine_reload_renderer_action(
+        *active_mode,
+        renderer.is_some(),
+        current_shader_config.as_ref(),
+        &new_config,
+    );
+
+    *config = new_config;
+    *cache = new_cache;
+    *sources = new_sources;
+    *state_store = StateStore::new(config.state_file.clone());
+    *scheduler = Scheduler::new(config.image.timer, config.image.remote_update_timer);
+    *local_images_count = next_local_count;
+    *remote_images_count = next_remote_count;
+    session_stats.set_total_images(*local_images_count + *remote_images_count);
+    session_stats.set_timer_display(format_config_duration(config.image.timer));
+    session_stats
+        .set_remote_update_timer_display(format_config_duration(config.image.remote_update_timer));
+    logging::set_level(&config.log_level);
+
+    *updater_runtime = updater::initialize(&config.updater, relaunch_args.to_vec());
+    *updater_event_rx = updater_runtime.take_event_receiver();
+    *updater_restart_context = updater_runtime.restart_context();
+    *updater_operation_in_progress = false;
+    *startup_update_check_deadline = None;
+    *updater_interval = updater_runtime.check_interval().map(|check_interval| {
+        let mut interval =
+            tokio::time::interval_at(tokio::time::Instant::now() + check_interval, check_interval);
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        interval
+    });
+    session_stats.set_app_update_status(updater_runtime.status().label().to_string());
+    if updater_runtime.status() == UpdaterStatus::Idle {
+        let _ = request_update_check(
+            updater_runtime,
+            updater_operation_in_progress,
+            UpdateTrigger::Startup,
+        );
+    }
+
+    match renderer_action {
+        ReloadRendererAction::KeepImageMode => {
+            session_stats.set_shader_active(false);
+            session_stats.set_shader_name(String::new());
+        }
+        ReloadRendererAction::KeepCurrentShader => {
+            if config.shader.is_none() {
+                config.shader = current_shader_config.clone();
+                warn!(
+                    "reloaded config omitted shader settings while shader mode is active; keeping current shader runtime"
+                );
+            }
+            session_stats.set_shader_active(true);
+            session_stats.set_shader_name(
+                config
+                    .shader
+                    .as_ref()
+                    .map(|shader| shader.name.clone())
+                    .unwrap_or_default(),
+            );
+            info!("settings reload left live shader configuration unchanged");
+        }
+        ReloadRendererAction::StopShader => {
+            stop_renderer(renderer, "settings reload switched runtime to image mode").await;
+            *renderer = None;
+            *renderer_event_rx = None;
+            *active_mode = ActiveMode::Image;
+            session_stats.set_shader_active(false);
+            session_stats.set_shader_name(String::new());
+            info!("settings reload switched runtime to image mode");
+        }
+        ReloadRendererAction::StartShader(shader_config) => {
+            stop_renderer(renderer, "settings reload restarting shader mode").await;
+            *renderer = None;
+            *renderer_event_rx = None;
+            *active_mode = ActiveMode::Image;
+            session_stats.set_shader_active(false);
+            session_stats.set_shader_name(String::new());
+
+            let shader_name = shader_config.name.clone();
+            match ShaderRenderer::start(shader_config) {
+                Ok(mut new_renderer) => {
+                    *renderer_event_rx = new_renderer.take_event_receiver();
+                    *renderer = Some(new_renderer);
+                    *active_mode = ActiveMode::Shader;
+                    session_stats.set_shader_active(true);
+                    session_stats.set_shader_name(shader_name);
+                    info!("settings reload switched runtime to shader mode");
+                }
+                Err(error) => {
+                    warn!(error = %error, "failed to start shader mode from reloaded settings");
+                }
+            }
+        }
+        ReloadRendererAction::ApplyShaderConfig(shader_config) => {
+            let shader_name = shader_config.name.clone();
+            match renderer.as_ref() {
+                Some(renderer) => match renderer.apply_config(shader_config).await {
+                    Ok(()) => {
+                        *active_mode = ActiveMode::Shader;
+                        session_stats.set_shader_active(true);
+                        session_stats.set_shader_name(shader_name);
+                        info!("settings reload updated live shader configuration");
+                    }
+                    Err(error) => {
+                        config.shader = current_shader_config.clone();
+                        session_stats.set_shader_active(true);
+                        session_stats.set_shader_name(
+                            current_shader_config
+                                .as_ref()
+                                .map(|shader| shader.name.clone())
+                                .unwrap_or_default(),
+                        );
+                        warn!(
+                            error = %error,
+                            "failed to apply reloaded shader settings; keeping current shader runtime"
+                        );
+                    }
+                },
+                None => {
+                    warn!(
+                        "shader reload requested a live config update but no renderer was active; attempting a fresh shader start"
+                    );
+                    if let Some(shader_config) = config.shader.clone() {
+                        let shader_name = shader_config.name.clone();
+                        match ShaderRenderer::start(shader_config) {
+                            Ok(mut new_renderer) => {
+                                *renderer_event_rx = new_renderer.take_event_receiver();
+                                *renderer = Some(new_renderer);
+                                *active_mode = ActiveMode::Shader;
+                                session_stats.set_shader_active(true);
+                                session_stats.set_shader_name(shader_name);
+                                info!(
+                                    "settings reload recovered shader mode with a fresh renderer start"
+                                );
+                            }
+                            Err(error) => {
+                                *active_mode = ActiveMode::Image;
+                                session_stats.set_shader_active(false);
+                                session_stats.set_shader_name(String::new());
+                                warn!(
+                                    error = %error,
+                                    "failed to recover shader mode after missing renderer during settings reload"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if *active_mode == ActiveMode::Image {
+        match try_switch_once(rotation, cache.as_ref(), backend, config).await {
+            Ok(Some(next_id)) => {
+                session_stats.inc_images_shown();
+                *last_image_id = Some(next_id);
+            }
+            Ok(None) => warn!("settings reload kept image mode but no image was available"),
+            Err(error) => warn!(error = %error, "failed to apply wallpaper after settings reload"),
+        }
+    }
+
+    let restart_requested = restart_pending_on_next_switch
+        && *active_mode == ActiveMode::Shader
+        && restart_after_update(
+            updater_restart_context.as_ref(),
+            state_store,
+            rotation,
+            last_image_id.clone(),
+            single_instance_guard,
+        );
+
+    if let Err(error) = persist_state(state_store, rotation, last_image_id.clone()) {
+        warn!(error = %error, "failed to persist state after settings reload");
+    }
+    info!("settings reload complete");
+
+    Ok(restart_requested)
 }
 
 fn determine_reload_renderer_action(

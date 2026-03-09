@@ -97,7 +97,9 @@ impl ShaderRenderer {
         tokio::task::spawn_blocking(move || join_handle.join())
             .await
             .context("failed to join shader renderer shutdown task")?
-            .map_err(|panic| anyhow!("shader renderer thread panicked during shutdown: {panic:?}"))?;
+            .map_err(|panic| {
+                anyhow!("shader renderer thread panicked during shutdown: {panic:?}")
+            })?;
 
         Ok(())
     }

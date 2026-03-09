@@ -1,6 +1,6 @@
 use crate::errors::Result;
 use anyhow::{bail, Context};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -21,7 +21,7 @@ const DEFAULT_MAX_CACHE_MB: u64 = 1024;
 const DEFAULT_MAX_CACHE_AGE_DAYS: u64 = 30;
 const DEFAULT_UPDATER_FEED_URL: &str = "https://github.com/hmerritt/aura/releases/latest/download";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum OutputFormat {
     Jpg,
@@ -37,21 +37,21 @@ impl OutputFormat {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum RendererMode {
     Image,
     Shader,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ShaderDesktopScope {
     Virtual,
     Primary,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ShaderColorSpace {
     Unorm,
@@ -207,7 +207,7 @@ pub struct ShaderConfig {
     pub color_space: ShaderColorSpace,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConfigWarning {
     pub key_path: String,
     pub issue: String,
@@ -219,6 +219,77 @@ pub struct ConfigWarning {
 pub struct ConfigWithWarnings {
     pub config: AuraConfig,
     pub warnings: Vec<ConfigWarning>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SettingsLoadResult {
+    pub document: SettingsDocument,
+    pub warnings: Vec<ConfigWarning>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SettingsValidationResult {
+    pub warnings: Vec<ConfigWarning>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SettingsDocument {
+    pub renderer: RendererMode,
+    pub image: SettingsImageConfig,
+    pub shader: SettingsShaderConfig,
+    pub updater: SettingsUpdaterConfig,
+    pub cache_dir: String,
+    pub state_file: String,
+    pub log_level: String,
+    pub max_cache_mb: u64,
+    pub max_cache_age_days: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SettingsImageConfig {
+    pub timer: String,
+    #[serde(rename = "remoteUpdateTimer")]
+    pub remote_update_timer: String,
+    pub sources: Vec<SettingsSourceConfig>,
+    pub format: OutputFormat,
+    pub jpeg_quality: u8,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum SettingsSourceConfig {
+    File {
+        path: String,
+    },
+    Directory {
+        path: String,
+        recursive: bool,
+        extensions: Option<Vec<String>>,
+    },
+    Rss {
+        url: String,
+        max_items: usize,
+        download_dir: Option<String>,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SettingsShaderConfig {
+    pub name: String,
+    pub target_fps: u16,
+    pub resolution: u8,
+    pub mouse_enabled: bool,
+    pub desktop_scope: ShaderDesktopScope,
+    pub color_space: ShaderColorSpace,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SettingsUpdaterConfig {
+    pub enabled: bool,
+    #[serde(rename = "checkInterval")]
+    pub check_interval: String,
+    #[serde(rename = "feedUrl")]
+    pub feed_url: String,
 }
 
 impl ConfigWarning {
@@ -261,6 +332,48 @@ pub fn parse_from_str_with_warnings(content: &str, path: &Path) -> Result<Config
     let raw: RawConfig =
         hcl::from_str(content).with_context(|| format!("invalid HCL in {}", path.display()))?;
     AuraConfig::from_raw(raw, path)
+}
+
+pub fn load_settings_document(path: &Path) -> Result<SettingsLoadResult> {
+    let loaded = load_from_path_with_warnings(path)?;
+    Ok(SettingsLoadResult {
+        document: SettingsDocument::from_config(&loaded.config),
+        warnings: loaded.warnings,
+    })
+}
+
+pub fn validate_settings_document(
+    document: &SettingsDocument,
+    path: &Path,
+) -> Result<SettingsValidationResult> {
+    let rendered = document.render_hcl();
+    let parsed = parse_from_str_with_warnings(&rendered, path)?;
+    Ok(SettingsValidationResult {
+        warnings: parsed.warnings,
+    })
+}
+
+pub fn save_settings_document(path: &Path, document: &SettingsDocument) -> Result<()> {
+    let validation = validate_settings_document(document, path)?;
+    if !validation.warnings.is_empty() {
+        bail!(
+            "settings document contains validation warnings: {}",
+            format_settings_warnings(&validation.warnings)
+        );
+    }
+
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create config directory {}", parent.display()))?;
+    }
+
+    let payload = document.render_hcl();
+    let tmp_path = path.with_extension("tmp");
+    fs::write(&tmp_path, payload)
+        .with_context(|| format!("failed to write {}", tmp_path.display()))?;
+    fs::rename(&tmp_path, path)
+        .with_context(|| format!("failed to save config {}", path.display()))?;
+    Ok(())
 }
 
 pub fn default_hcl(pictures_dir: &Path) -> String {
@@ -307,6 +420,236 @@ updater = {{
 "#,
         pictures
     )
+}
+
+impl SettingsDocument {
+    fn from_config(config: &AuraConfig) -> Self {
+        let shader = config.shader.clone().unwrap_or_else(default_shader_config);
+        Self {
+            renderer: config.renderer,
+            image: SettingsImageConfig {
+                timer: format_duration_value(config.image.timer),
+                remote_update_timer: format_duration_value(config.image.remote_update_timer),
+                sources: config
+                    .image
+                    .sources
+                    .iter()
+                    .map(SettingsSourceConfig::from_source)
+                    .collect(),
+                format: config.image.format,
+                jpeg_quality: config.image.jpeg_quality,
+            },
+            shader: SettingsShaderConfig {
+                name: shader.name,
+                target_fps: shader.target_fps,
+                resolution: shader.resolution,
+                mouse_enabled: shader.mouse_enabled,
+                desktop_scope: shader.desktop_scope,
+                color_space: shader.color_space,
+            },
+            updater: SettingsUpdaterConfig {
+                enabled: config.updater.enabled,
+                check_interval: format_duration_value(config.updater.check_interval),
+                feed_url: config.updater.feed_url.clone(),
+            },
+            cache_dir: config.cache_dir.to_string_lossy().into_owned(),
+            state_file: config.state_file.to_string_lossy().into_owned(),
+            log_level: config.log_level.clone(),
+            max_cache_mb: config.max_cache_bytes / (1024 * 1024),
+            max_cache_age_days: config.max_cache_age.as_secs() / (24 * 60 * 60),
+        }
+    }
+
+    fn render_hcl(&self) -> String {
+        let source_lines = self
+            .image
+            .sources
+            .iter()
+            .map(SettingsSourceConfig::render_hcl)
+            .collect::<Vec<_>>()
+            .join(",\n");
+        format!(
+            concat!(
+                "renderer = {renderer}\n\n",
+                "image = {{\n",
+                "  timer = {image_timer}\n",
+                "  remoteUpdateTimer = {image_remote}\n",
+                "  sources = [\n{sources}\n  ]\n",
+                "  format = {image_format}\n",
+                "  jpeg_quality = {jpeg_quality}\n",
+                "}}\n\n",
+                "shader = {{\n",
+                "  name = {shader_name}\n",
+                "  target_fps = {target_fps}\n",
+                "  resolution = {resolution}\n",
+                "  mouse_enabled = {mouse_enabled}\n",
+                "  desktop_scope = {desktop_scope}\n",
+                "  color_space = {color_space}\n",
+                "}}\n\n",
+                "updater = {{\n",
+                "  enabled = {updater_enabled}\n",
+                "  checkInterval = {check_interval}\n",
+                "  feedUrl = {feed_url}\n",
+                "}}\n\n",
+                "cache_dir = {cache_dir}\n",
+                "state_file = {state_file}\n",
+                "log_level = {log_level}\n",
+                "max_cache_mb = {max_cache_mb}\n",
+                "max_cache_age_days = {max_cache_age_days}\n"
+            ),
+            renderer = hcl_string(match self.renderer {
+                RendererMode::Image => "image",
+                RendererMode::Shader => "shader",
+            }),
+            image_timer = hcl_string(&self.image.timer),
+            image_remote = hcl_string(&self.image.remote_update_timer),
+            sources = indent_block(&source_lines, 4),
+            image_format = hcl_string(match self.image.format {
+                OutputFormat::Jpg => "jpg",
+                OutputFormat::Png => "png",
+            }),
+            jpeg_quality = self.image.jpeg_quality,
+            shader_name = hcl_string(&self.shader.name),
+            target_fps = self.shader.target_fps,
+            resolution = self.shader.resolution,
+            mouse_enabled = self.shader.mouse_enabled,
+            desktop_scope = hcl_string(match self.shader.desktop_scope {
+                ShaderDesktopScope::Virtual => "virtual",
+                ShaderDesktopScope::Primary => "primary",
+            }),
+            color_space = hcl_string(match self.shader.color_space {
+                ShaderColorSpace::Unorm => "unorm",
+                ShaderColorSpace::Srgb => "srgb",
+            }),
+            updater_enabled = self.updater.enabled,
+            check_interval = hcl_string(&self.updater.check_interval),
+            feed_url = hcl_string(&self.updater.feed_url),
+            cache_dir = hcl_string(&self.cache_dir),
+            state_file = hcl_string(&self.state_file),
+            log_level = hcl_string(&self.log_level),
+            max_cache_mb = self.max_cache_mb,
+            max_cache_age_days = self.max_cache_age_days,
+        )
+    }
+}
+
+impl SettingsSourceConfig {
+    fn from_source(source: &SourceConfig) -> Self {
+        match source {
+            SourceConfig::File { path } => Self::File {
+                path: path.to_string_lossy().into_owned(),
+            },
+            SourceConfig::Directory {
+                path,
+                recursive,
+                extensions,
+            } => Self::Directory {
+                path: path.to_string_lossy().into_owned(),
+                recursive: *recursive,
+                extensions: extensions.clone(),
+            },
+            SourceConfig::Rss {
+                url,
+                max_items,
+                download_dir,
+            } => Self::Rss {
+                url: url.clone(),
+                max_items: *max_items,
+                download_dir: download_dir
+                    .as_ref()
+                    .map(|path| path.to_string_lossy().into_owned()),
+            },
+        }
+    }
+
+    fn render_hcl(&self) -> String {
+        match self {
+            Self::File { path } => {
+                format!("{{ type = \"file\", path = {} }}", hcl_string(path))
+            }
+            Self::Directory {
+                path,
+                recursive,
+                extensions,
+            } => {
+                let mut parts = vec![
+                    "type = \"directory\"".to_string(),
+                    format!("path = {}", hcl_string(path)),
+                    format!("recursive = {recursive}"),
+                ];
+                if let Some(extensions) = extensions {
+                    let values = extensions
+                        .iter()
+                        .map(|value| hcl_string(value))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    parts.push(format!("extensions = [{values}]"));
+                }
+                format!("{{ {} }}", parts.join(", "))
+            }
+            Self::Rss {
+                url,
+                max_items,
+                download_dir,
+            } => {
+                let mut parts = vec![
+                    "type = \"rss\"".to_string(),
+                    format!("url = {}", hcl_string(url)),
+                    format!("max_items = {max_items}"),
+                ];
+                if let Some(download_dir) = download_dir {
+                    parts.push(format!("download_dir = {}", hcl_string(download_dir)));
+                }
+                format!("{{ {} }}", parts.join(", "))
+            }
+        }
+    }
+}
+
+fn format_settings_warnings(warnings: &[ConfigWarning]) -> String {
+    warnings
+        .iter()
+        .map(|warning| format!("{}: {}", warning.key_path, warning.issue))
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+fn format_duration_value(duration: Duration) -> String {
+    let total_seconds = duration.as_secs();
+    if total_seconds == 0 {
+        return "0s".to_string();
+    }
+
+    if total_seconds % 86_400 == 0 {
+        return format!("{}d", total_seconds / 86_400);
+    }
+    if total_seconds % 3_600 == 0 {
+        return format!("{}h", total_seconds / 3_600);
+    }
+    if total_seconds % 60 == 0 {
+        return format!("{}m", total_seconds / 60);
+    }
+
+    format!("{total_seconds}s")
+}
+
+fn hcl_string(value: &str) -> String {
+    let escaped = value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
+        .replace('\t', "\\t");
+    format!("\"{escaped}\"")
+}
+
+fn indent_block(value: &str, spaces: usize) -> String {
+    let indent = " ".repeat(spaces);
+    value
+        .lines()
+        .map(|line| format!("{indent}{line}"))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 impl AuraConfig {
@@ -1607,5 +1950,139 @@ image = {{
 
         let parsed = parse_from_str_with_warnings(&raw, &tmp.path().join("aura.hcl")).unwrap();
         assert!(has_warning(&parsed.warnings, "timer"));
+    }
+
+    #[test]
+    fn loads_settings_document_snapshot() {
+        let tmp = tempdir().unwrap();
+        let dir = tmp.path().join("imgs");
+        fs::create_dir_all(&dir).unwrap();
+        let config_path = tmp.path().join("aura.hcl");
+        let raw = format!(
+            r#"
+renderer = "shader"
+image = {{
+  timer = "15m"
+  remoteUpdateTimer = "2h"
+  sources = [ {{ type = "directory", path = "{}" }} ]
+  format = "png"
+  jpeg_quality = 88
+}}
+shader = {{
+  name = "silk"
+  target_fps = 30
+  resolution = 70
+  mouse_enabled = true
+  desktop_scope = "primary"
+  color_space = "srgb"
+}}
+"#,
+            hcl_path(&dir)
+        );
+        fs::write(&config_path, raw).unwrap();
+
+        let loaded = load_settings_document(&config_path).unwrap();
+        assert!(loaded.warnings.is_empty());
+        assert_eq!(loaded.document.renderer, RendererMode::Shader);
+        assert_eq!(loaded.document.image.timer, "15m");
+        assert_eq!(loaded.document.image.remote_update_timer, "2h");
+        assert_eq!(loaded.document.image.format, OutputFormat::Png);
+        assert_eq!(loaded.document.image.jpeg_quality, 88);
+        assert_eq!(loaded.document.shader.name, "silk");
+        assert_eq!(loaded.document.shader.target_fps, 30);
+        assert_eq!(
+            loaded.document.shader.desktop_scope,
+            ShaderDesktopScope::Primary
+        );
+        assert_eq!(loaded.document.shader.color_space, ShaderColorSpace::Srgb);
+    }
+
+    #[test]
+    fn validates_settings_document_and_reports_warnings() {
+        let tmp = tempdir().unwrap();
+        let config_path = tmp.path().join("aura.hcl");
+        let document = SettingsDocument {
+            renderer: RendererMode::Image,
+            image: SettingsImageConfig {
+                timer: "2s".to_string(),
+                remote_update_timer: "2h".to_string(),
+                sources: vec![SettingsSourceConfig::Directory {
+                    path: tmp.path().to_string_lossy().into_owned(),
+                    recursive: true,
+                    extensions: Some(vec!["jpg".to_string()]),
+                }],
+                format: OutputFormat::Jpg,
+                jpeg_quality: 90,
+            },
+            shader: SettingsShaderConfig {
+                name: "gradient_glossy".to_string(),
+                target_fps: 60,
+                resolution: 100,
+                mouse_enabled: false,
+                desktop_scope: ShaderDesktopScope::Virtual,
+                color_space: ShaderColorSpace::Unorm,
+            },
+            updater: SettingsUpdaterConfig {
+                enabled: true,
+                check_interval: "6h".to_string(),
+                feed_url: DEFAULT_UPDATER_FEED_URL.to_string(),
+            },
+            cache_dir: tmp.path().join("cache").to_string_lossy().into_owned(),
+            state_file: tmp.path().join("state.json").to_string_lossy().into_owned(),
+            log_level: "info".to_string(),
+            max_cache_mb: 512,
+            max_cache_age_days: 14,
+        };
+
+        let validation = validate_settings_document(&document, &config_path).unwrap();
+        assert!(has_warning(&validation.warnings, "image.timer"));
+    }
+
+    #[test]
+    fn saves_settings_document_as_canonical_hcl() {
+        let tmp = tempdir().unwrap();
+        let images = tmp.path().join("images");
+        fs::create_dir_all(&images).unwrap();
+        let config_path = tmp.path().join("aura.hcl");
+        let document = SettingsDocument {
+            renderer: RendererMode::Image,
+            image: SettingsImageConfig {
+                timer: "30m".to_string(),
+                remote_update_timer: "4h".to_string(),
+                sources: vec![SettingsSourceConfig::Directory {
+                    path: images.to_string_lossy().into_owned(),
+                    recursive: true,
+                    extensions: Some(vec!["jpg".to_string(), "png".to_string()]),
+                }],
+                format: OutputFormat::Jpg,
+                jpeg_quality: 90,
+            },
+            shader: SettingsShaderConfig {
+                name: "gradient_glossy".to_string(),
+                target_fps: 60,
+                resolution: 100,
+                mouse_enabled: false,
+                desktop_scope: ShaderDesktopScope::Virtual,
+                color_space: ShaderColorSpace::Unorm,
+            },
+            updater: SettingsUpdaterConfig {
+                enabled: true,
+                check_interval: "6h".to_string(),
+                feed_url: DEFAULT_UPDATER_FEED_URL.to_string(),
+            },
+            cache_dir: tmp.path().join("cache").to_string_lossy().into_owned(),
+            state_file: tmp.path().join("state.json").to_string_lossy().into_owned(),
+            log_level: "debug".to_string(),
+            max_cache_mb: 256,
+            max_cache_age_days: 21,
+        };
+
+        save_settings_document(&config_path, &document).unwrap();
+        let written = fs::read_to_string(&config_path).unwrap();
+        assert!(written.contains("renderer = \"image\""));
+        assert!(written.contains("remoteUpdateTimer = \"4h\""));
+        assert!(written.contains("extensions = [\"jpg\", \"png\"]"));
+        assert!(written.contains("log_level = \"debug\""));
+        assert!(written.contains("max_cache_mb = 256"));
     }
 }
