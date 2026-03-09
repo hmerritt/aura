@@ -1,6 +1,6 @@
 [package]
 name = "aura"
-version = "1.0.0"
+version = "0.23.34"
 edition = "2021"
 
 [dependencies]
@@ -49,6 +49,7 @@ winit = "0.30"
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
+    "Win32_Graphics_Dwm",
     "Win32_Graphics_Gdi",
     "Win32_UI_WindowsAndMessaging",
     "Win32_UI_Shell",

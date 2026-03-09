@@ -1,5 +1,5 @@
 use crate::errors::Result;
-use crate::tray::{format_running_duration, SessionStats, TrayEvent};
+use crate::tray::{format_running_duration, SessionStats, TrayAnchor, TrayEvent};
 use crate::updater::UpdaterStatus;
 use crate::version;
 use anyhow::{anyhow, bail};
@@ -31,7 +31,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     IDI_APPLICATION, IMAGE_BITMAP, IMAGE_ICON, LR_CREATEDIBSECTION, LR_DEFAULTSIZE, LR_SHARED,
     MENUITEMINFOW, MFS_DISABLED, MFT_SEPARATOR, MFT_STRING, MIIM_BITMAP, MIIM_FTYPE, MIIM_ID,
     MIIM_STATE, MIIM_STRING, MSG, PM_REMOVE, TPM_LEFTALIGN, TPM_NOANIMATION, TPM_RETURNCMD,
-    TPM_RIGHTBUTTON, WM_APP, WM_LBUTTONDBLCLK, WM_NCCREATE, WM_NCDESTROY, WM_NULL, WM_RBUTTONUP,
+    TPM_RIGHTBUTTON, WM_APP, WM_LBUTTONUP, WM_NCCREATE, WM_NCDESTROY, WM_NULL, WM_RBUTTONUP,
     WM_TIMER, WNDCLASSW, WS_EX_NOACTIVATE,
 };
 
@@ -258,9 +258,9 @@ unsafe extern "system" fn wnd_proc(
             let event_code = lparam as u32;
             if let Some(data) = get_window_data(hwnd) {
                 match event_code {
-                    WM_LBUTTONDBLCLK => {
-                        if !data.session_stats.is_shader_active() {
-                            let _ = data.event_tx.send(TrayEvent::NextWallpaper);
+                    WM_LBUTTONUP => {
+                        if let Some(anchor) = tray_anchor_from_cursor_position() {
+                            let _ = data.event_tx.send(TrayEvent::OpenSettingsWindow(anchor));
                         }
                     }
                     WM_RBUTTONUP => {
@@ -557,7 +557,7 @@ unsafe fn show_context_menu(hwnd: HWND, data: &mut WindowData) {
             KillTimer(hwnd, TRAY_MENU_REFRESH_TIMER_ID);
         }
         if selected_command != 0 {
-            handle_tray_command(data, selected_command as u32);
+            handle_tray_command(data, selected_command as u32, anchor_point);
         }
         PostMessageW(hwnd, WM_NULL, 0, 0);
 
@@ -577,7 +577,7 @@ unsafe fn show_context_menu(hwnd: HWND, data: &mut WindowData) {
     }
 }
 
-unsafe fn handle_tray_command(data: &mut WindowData, command_id: u32) {
+unsafe fn handle_tray_command(data: &mut WindowData, command_id: u32, anchor_point: POINT) {
     match command_id {
         TRAY_COMMAND_NEXT_BACKGROUND => {
             let _ = data.event_tx.send(TrayEvent::NextWallpaper);
@@ -595,13 +595,31 @@ unsafe fn handle_tray_command(data: &mut WindowData, command_id: u32) {
             let _ = data.event_tx.send(TrayEvent::CheckForUpdates);
         }
         TRAY_COMMAND_SETTINGS => {
-            let _ = data.event_tx.send(TrayEvent::OpenSettingsWindow);
+            let _ = data
+                .event_tx
+                .send(TrayEvent::OpenSettingsWindow(tray_anchor_from_point(
+                    anchor_point,
+                )));
         }
         TRAY_COMMAND_EXIT => {
             let _ = data.event_tx.send(TrayEvent::Exit);
         }
         _ => {}
     }
+}
+
+unsafe fn tray_anchor_from_cursor_position() -> Option<TrayAnchor> {
+    let mut anchor_point: POINT = std::mem::zeroed();
+    if GetCursorPos(&mut anchor_point) == 0 {
+        tracing::warn!("GetCursorPos failed for tray click");
+        return None;
+    }
+
+    Some(tray_anchor_from_point(anchor_point))
+}
+
+fn tray_anchor_from_point(point: POINT) -> TrayAnchor {
+    TrayAnchor::new(point.x, point.y)
 }
 
 unsafe fn insert_command_menu_item(
@@ -886,6 +904,7 @@ fn wide_null(value: &str) -> Vec<u16> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use windows_sys::Win32::Foundation::POINT;
 
     #[test]
     fn app_update_status_label_in_progress_set() {
@@ -920,5 +939,13 @@ mod tests {
         assert!(!app_update_status_label_is_terminal(
             UpdaterStatus::Checking.label()
         ));
+    }
+
+    #[test]
+    fn tray_anchor_from_point_preserves_coordinates() {
+        let anchor = tray_anchor_from_point(POINT { x: 320, y: 640 });
+
+        assert_eq!(anchor.x, 320);
+        assert_eq!(anchor.y, 640);
     }
 }
