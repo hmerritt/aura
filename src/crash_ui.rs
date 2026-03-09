@@ -30,6 +30,22 @@ mod windows_impl {
         show_dialog_once("Aura - Fatal Error", &message);
     }
 
+    pub fn show_error_dialog(title: &str, message: &str) {
+        if !mark_dialog_shown(&DIALOG_SHOWN) {
+            return;
+        }
+        let title_wide = wide_null(title);
+        let message_wide = wide_null(message);
+        unsafe {
+            MessageBoxW(
+                ptr::null_mut(),
+                message_wide.as_ptr(),
+                title_wide.as_ptr(),
+                MB_OK | MB_ICONERROR | MB_SETFOREGROUND | MB_TOPMOST,
+            );
+        }
+    }
+
     pub fn show_panic_dialog(panic_summary: &str) {
         let message = panic_message(panic_summary);
         show_dialog_once("Aura - Unexpected Crash", &message);
@@ -157,7 +173,7 @@ mod windows_impl {
 
 #[cfg(windows)]
 pub use windows_impl::{
-    install_panic_hook, show_fatal_error_dialog, show_native_crash_dialog,
+    install_panic_hook, show_error_dialog, show_fatal_error_dialog, show_native_crash_dialog,
 };
 
 #[cfg(not(windows))]
@@ -165,6 +181,9 @@ pub fn install_panic_hook(_debug_requested: bool) {}
 
 #[cfg(not(windows))]
 pub fn show_fatal_error_dialog(_error: &str) {}
+
+#[cfg(not(windows))]
+pub fn show_error_dialog(_title: &str, _message: &str) {}
 
 #[cfg(not(windows))]
 pub fn show_native_crash_dialog(
