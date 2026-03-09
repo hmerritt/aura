@@ -14,6 +14,7 @@ use std::thread;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
+use tokio::sync::oneshot;
 use windows_sys::Win32::Foundation::HWND;
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
@@ -30,15 +31,7 @@ pub struct ShaderRenderer {
 
 impl ShaderRenderer {
     pub fn start(config: ShaderConfig) -> Result<Self> {
-        let shader_name = config.name.clone();
-        let shader_bytes = precompiled::shader_bytes(&shader_name).ok_or_else(|| {
-            let available = precompiled::shader_names();
-            anyhow!(
-                "configured shader \"{}\" is not available; precompiled shaders: {}",
-                shader_name,
-                available.join(", ")
-            )
-        })?;
+        let shader_bytes = resolve_shader_bytes(&config)?;
 
         let (event_tx, event_rx) = mpsc::unbounded_channel::<RendererEvent>();
         let (init_tx, init_rx) = std::sync::mpsc::channel::<Result<EventLoopProxy<UserEvent>>>();
@@ -75,6 +68,22 @@ impl ShaderRenderer {
         Ok(())
     }
 
+    pub async fn apply_config(&self, config: ShaderConfig) -> Result<()> {
+        let shader_bytes = resolve_shader_bytes(&config)?;
+        let (result_tx, result_rx) = oneshot::channel();
+        self.proxy
+            .send_event(UserEvent::ApplyConfig {
+                config,
+                shader_bytes,
+                result_tx,
+            })
+            .map_err(|error| anyhow!("failed to send renderer config update: {error}"))?;
+        result_rx
+            .await
+            .context("shader renderer dropped config update response")??;
+        Ok(())
+    }
+
     pub fn stop(&mut self) {
         let _ = self.send_command(RendererCommand::Stop);
         if let Some(handle) = self.join_handle.take() {
@@ -89,9 +98,13 @@ impl Drop for ShaderRenderer {
     }
 }
 
-#[derive(Debug, Clone)]
 enum UserEvent {
     Stop,
+    ApplyConfig {
+        config: ShaderConfig,
+        shader_bytes: &'static [u8],
+        result_tx: oneshot::Sender<Result<()>>,
+    },
 }
 
 fn run_renderer_thread(
@@ -143,7 +156,7 @@ impl RendererApp {
     ) -> Self {
         let geometry_poll_interval = Duration::from_millis(1000);
         Self {
-            frame_interval: Duration::from_secs_f64(1.0 / f64::from(config.target_fps)),
+            frame_interval: frame_interval_for_target_fps(config.target_fps),
             next_geometry_poll_at: Instant::now() + geometry_poll_interval,
             geometry_poll_interval,
             last_desktop_rect: None,
@@ -160,6 +173,51 @@ impl RendererApp {
 
     fn emit_fatal(&self, message: String) {
         let _ = self.event_tx.send(RendererEvent::Fatal { message });
+    }
+
+    fn apply_config(&mut self, config: ShaderConfig, shader_bytes: &'static [u8]) -> Result<()> {
+        let frame_interval = frame_interval_for_target_fps(config.target_fps);
+        let Some(window) = self.window.as_ref().cloned() else {
+            self.config = config;
+            self.shader_bytes = shader_bytes;
+            self.frame_interval = frame_interval;
+            return Ok(());
+        };
+
+        let target_rect = desktop_rect_for_scope(config.desktop_scope);
+        if target_rect.width <= 0 || target_rect.height <= 0 {
+            bail!(
+                "failed to size render window for config update: empty desktop bounds for {:?}",
+                config.desktop_scope
+            );
+        }
+
+        if let Some(runtime) = self.runtime.as_mut() {
+            runtime.apply_config(shader_bytes, config.clone(), target_rect)?;
+        } else {
+            self.runtime = Some(WgpuRuntime::new(
+                window.clone(),
+                shader_bytes,
+                config.clone(),
+                target_rect,
+            )?);
+        }
+
+        self.config = config;
+        self.shader_bytes = shader_bytes;
+        self.frame_interval = frame_interval;
+        self.enabled = true;
+        self.paused = false;
+        self.next_frame_at = Instant::now();
+        self.next_geometry_poll_at = Instant::now() + self.geometry_poll_interval;
+        self.last_desktop_rect = None;
+
+        if let Ok(hwnd) = window_hwnd(window.as_ref()) {
+            show_desktop_window(hwnd, true);
+        }
+        self.sync_desktop_geometry(true);
+
+        Ok(())
     }
 
     fn sync_desktop_geometry(&mut self, force: bool) {
@@ -354,6 +412,14 @@ impl ApplicationHandler<UserEvent> for RendererApp {
             UserEvent::Stop => {
                 event_loop.exit();
             }
+            UserEvent::ApplyConfig {
+                config,
+                shader_bytes,
+                result_tx,
+            } => {
+                let result = self.apply_config(config, shader_bytes);
+                let _ = result_tx.send(result);
+            }
         }
     }
 
@@ -387,6 +453,22 @@ fn should_apply_geometry_update(
     force: bool,
 ) -> bool {
     force || previous_rect != Some(current_rect)
+}
+
+fn frame_interval_for_target_fps(target_fps: u16) -> Duration {
+    Duration::from_secs_f64(1.0 / f64::from(target_fps))
+}
+
+fn resolve_shader_bytes(config: &ShaderConfig) -> Result<&'static [u8]> {
+    let shader_name = config.name.clone();
+    precompiled::shader_bytes(&shader_name).ok_or_else(|| {
+        let available = precompiled::shader_names();
+        anyhow!(
+            "configured shader \"{}\" is not available; precompiled shaders: {}",
+            shader_name,
+            available.join(", ")
+        )
+    })
 }
 
 fn window_hwnd(window: &Window) -> Result<HWND> {
@@ -436,5 +518,10 @@ mod tests {
         let previous = rect(0, 0, 3840, 2160);
         let current = rect(-1920, 0, 3840, 2160);
         assert!(should_apply_geometry_update(Some(previous), current, false));
+    }
+
+    #[test]
+    fn computes_frame_interval_from_fps() {
+        assert_eq!(frame_interval_for_target_fps(50), Duration::from_millis(20));
     }
 }

@@ -228,6 +228,118 @@ impl WgpuRuntime {
         self.recreate_internal_target();
     }
 
+    pub fn apply_config(
+        &mut self,
+        shader_bytes: &[u8],
+        shader_config: ShaderConfig,
+        desktop_rect: DesktopRect,
+    ) -> Result<()> {
+        let adapter = pollster::block_on(self._instance.request_adapter(
+            &wgpu::RequestAdapterOptions {
+                power_preference: SHADER_POWER_PREFERENCE,
+                force_fallback_adapter: false,
+                compatible_surface: Some(&self.surface),
+            },
+        ))
+        .ok_or_else(|| anyhow!("failed to find a compatible GPU adapter"))?;
+
+        let caps = self.surface.get_capabilities(&adapter);
+        if caps.formats.is_empty() {
+            bail!("adapter reported no surface formats");
+        }
+        let format = pick_surface_format(shader_config.color_space, &caps.formats);
+        if shader_config.color_space == ShaderColorSpace::Unorm && format.is_srgb() {
+            tracing::warn!(
+                color_space = ?shader_config.color_space,
+                surface_format = ?format,
+                "non-srgb surface format was requested but unavailable; falling back to sRGB"
+            );
+        }
+        tracing::info!(
+            color_space = ?shader_config.color_space,
+            surface_format = ?format,
+            "shader runtime surface color format selected"
+        );
+        let alpha_mode = caps
+            .alpha_modes
+            .first()
+            .copied()
+            .unwrap_or(wgpu::CompositeAlphaMode::Auto);
+        let output_size = PhysicalSize::new(
+            desktop_rect.width.max(1) as u32,
+            desktop_rect.height.max(1) as u32,
+        );
+        let internal_size = compute_internal_render_size(output_size, shader_config.resolution);
+        let config = wgpu::SurfaceConfiguration {
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            format,
+            width: output_size.width,
+            height: output_size.height,
+            present_mode: self.config.present_mode,
+            alpha_mode,
+            view_formats: vec![],
+            desired_maximum_frame_latency: self.config.desired_maximum_frame_latency,
+        };
+
+        let estimated_bytes =
+            estimate_swapchain_memory_bytes(config.width, config.height, SHADER_MAX_FRAME_LATENCY);
+        let estimated_mb = bytes_to_megabytes(estimated_bytes);
+        tracing::info!(
+            output_width = output_size.width,
+            output_height = output_size.height,
+            internal_width = internal_size.width,
+            internal_height = internal_size.height,
+            resolution_percent = shader_config.resolution,
+            desktop_scope = ?shader_config.desktop_scope,
+            power_preference = ?SHADER_POWER_PREFERENCE,
+            max_frame_latency = SHADER_MAX_FRAME_LATENCY,
+            memory_target_mb = SHADER_MEMORY_TARGET_MB,
+            estimated_swapchain_mb = estimated_mb,
+            "shader runtime surface memory estimate"
+        );
+        if estimated_mb > SHADER_MEMORY_TARGET_MB as f64 {
+            tracing::warn!(
+                memory_target_mb = SHADER_MEMORY_TARGET_MB,
+                estimated_swapchain_mb = estimated_mb,
+                "shader swapchain estimate exceeds memory target; continuing shader mode"
+            );
+        }
+
+        let (uniform_buffer, scene_bind_group, scene_pipeline) = create_scene_pipeline(
+            &self.device,
+            config.format,
+            shader_bytes,
+            shader_config.mouse_enabled,
+            internal_size,
+        )?;
+        let composite_pipeline = create_composite_pipeline(
+            &self.device,
+            config.format,
+            &self.composite_bind_group_layout,
+        );
+        let internal_target = create_internal_target(
+            &self.device,
+            internal_size,
+            config.format,
+            &self.composite_bind_group_layout,
+            &self.composite_sampler,
+        );
+
+        self.surface.configure(&self.device, &config);
+        self.config = config;
+        self.scene_pipeline = scene_pipeline;
+        self.scene_bind_group = scene_bind_group;
+        self.uniform_buffer = uniform_buffer;
+        self.composite_pipeline = composite_pipeline;
+        self.internal_target = internal_target;
+        self.mouse_enabled = shader_config.mouse_enabled;
+        self.resolution_percent = shader_config.resolution;
+        self.started_at = Instant::now();
+        self.frame_index = 0;
+
+        Ok(())
+    }
+
     pub fn render(&mut self, mouse: [f32; 2]) -> Result<()> {
         let output = match self.surface.get_current_texture() {
             Ok(output) => output,

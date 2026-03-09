@@ -197,7 +197,7 @@ pub struct UpdaterConfig {
     pub feed_url: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShaderConfig {
     pub name: String,
     pub target_fps: u16,

@@ -46,5 +46,9 @@ impl ShaderRenderer {
         Ok(())
     }
 
+    pub async fn apply_config(&self, _config: ShaderConfig) -> Result<()> {
+        anyhow::bail!("shader renderer is only supported on Windows")
+    }
+
     pub fn stop(&mut self) {}
 }

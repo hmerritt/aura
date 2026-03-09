@@ -20,7 +20,7 @@ mod version;
 mod wallpaper;
 
 use crate::cache::CacheManager;
-use crate::config::{load_from_path_with_warnings, ConfigWarning, RendererMode};
+use crate::config::{load_from_path_with_warnings, ConfigWarning, RendererMode, ShaderConfig};
 use crate::errors::Result;
 use crate::installer::{SquirrelEvent, StartupRegistrationStatus};
 use crate::renderer::{RendererEvent, ShaderRenderer};
@@ -44,6 +44,15 @@ use tracing::{info, warn};
 enum ActiveMode {
     Image,
     Shader,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ReloadRendererAction {
+    KeepImageMode,
+    KeepCurrentShader,
+    StartShader(ShaderConfig),
+    ApplyShaderConfig(ShaderConfig),
+    StopShader,
 }
 
 #[derive(Debug)]
@@ -484,6 +493,14 @@ async fn run(args: Vec<String>, debug_requested: bool) -> Result<()> {
                         rotation.rebuild_pool(refreshed_candidates);
                         rotation.restore_state(&preserved_state);
 
+                        let current_shader_config = config.shader.clone();
+                        let renderer_action = determine_reload_renderer_action(
+                            active_mode,
+                            renderer.is_some(),
+                            current_shader_config.as_ref(),
+                            &new_config,
+                        );
+
                         config = new_config;
                         cache = new_cache;
                         sources = new_sources;
@@ -523,16 +540,47 @@ async fn run(args: Vec<String>, debug_requested: bool) -> Result<()> {
                             );
                         }
 
-                        if let Some(renderer) = renderer.as_mut() {
-                            renderer.stop();
-                        }
-                        renderer = None;
-                        renderer_event_rx = None;
-                        active_mode = ActiveMode::Image;
-                        session_stats.set_shader_active(false);
-                        session_stats.set_shader_name(String::new());
-                        if config.renderer == RendererMode::Shader {
-                            if let Some(shader_config) = config.shader.clone() {
+                        match renderer_action {
+                            ReloadRendererAction::KeepImageMode => {
+                                session_stats.set_shader_active(false);
+                                session_stats.set_shader_name(String::new());
+                            }
+                            ReloadRendererAction::KeepCurrentShader => {
+                                if config.shader.is_none() {
+                                    config.shader = current_shader_config.clone();
+                                    warn!("reloaded config omitted shader settings while shader mode is active; keeping current shader runtime");
+                                }
+                                session_stats.set_shader_active(true);
+                                session_stats.set_shader_name(
+                                    config
+                                        .shader
+                                        .as_ref()
+                                        .map(|shader| shader.name.clone())
+                                        .unwrap_or_default(),
+                                );
+                                info!("settings reload left live shader configuration unchanged");
+                            }
+                            ReloadRendererAction::StopShader => {
+                                if let Some(renderer) = renderer.as_mut() {
+                                    renderer.stop();
+                                }
+                                renderer = None;
+                                renderer_event_rx = None;
+                                active_mode = ActiveMode::Image;
+                                session_stats.set_shader_active(false);
+                                session_stats.set_shader_name(String::new());
+                                info!("settings reload switched runtime to image mode");
+                            }
+                            ReloadRendererAction::StartShader(shader_config) => {
+                                if let Some(renderer) = renderer.as_mut() {
+                                    renderer.stop();
+                                }
+                                renderer = None;
+                                renderer_event_rx = None;
+                                active_mode = ActiveMode::Image;
+                                session_stats.set_shader_active(false);
+                                session_stats.set_shader_name(String::new());
+
                                 let shader_name = shader_config.name.clone();
                                 match ShaderRenderer::start(shader_config) {
                                     Ok(mut new_renderer) => {
@@ -544,7 +592,53 @@ async fn run(args: Vec<String>, debug_requested: bool) -> Result<()> {
                                         info!("settings reload switched runtime to shader mode");
                                     }
                                     Err(error) => {
-                                        warn!(error = %error, "failed to restart shader mode from reloaded settings");
+                                        warn!(error = %error, "failed to start shader mode from reloaded settings");
+                                    }
+                                }
+                            }
+                            ReloadRendererAction::ApplyShaderConfig(shader_config) => {
+                                let shader_name = shader_config.name.clone();
+                                match renderer.as_ref() {
+                                    Some(renderer) => match renderer.apply_config(shader_config).await {
+                                        Ok(()) => {
+                                            active_mode = ActiveMode::Shader;
+                                            session_stats.set_shader_active(true);
+                                            session_stats.set_shader_name(shader_name);
+                                            info!("settings reload updated live shader configuration");
+                                        }
+                                        Err(error) => {
+                                            config.shader = current_shader_config.clone();
+                                            session_stats.set_shader_active(true);
+                                            session_stats.set_shader_name(
+                                                current_shader_config
+                                                    .as_ref()
+                                                    .map(|shader| shader.name.clone())
+                                                    .unwrap_or_default(),
+                                            );
+                                            warn!(error = %error, "failed to apply reloaded shader settings; keeping current shader runtime");
+                                        }
+                                    },
+                                    None => {
+                                        warn!("shader reload requested a live config update but no renderer was active; attempting a fresh shader start");
+                                        if let Some(shader_config) = config.shader.clone() {
+                                            let shader_name = shader_config.name.clone();
+                                            match ShaderRenderer::start(shader_config) {
+                                                Ok(mut new_renderer) => {
+                                                    renderer_event_rx = new_renderer.take_event_receiver();
+                                                    renderer = Some(new_renderer);
+                                                    active_mode = ActiveMode::Shader;
+                                                    session_stats.set_shader_active(true);
+                                                    session_stats.set_shader_name(shader_name);
+                                                    info!("settings reload recovered shader mode with a fresh renderer start");
+                                                }
+                                                Err(error) => {
+                                                    active_mode = ActiveMode::Image;
+                                                    session_stats.set_shader_active(false);
+                                                    session_stats.set_shader_name(String::new());
+                                                    warn!(error = %error, "failed to recover shader mode after missing renderer during settings reload");
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -679,6 +773,42 @@ async fn run(args: Vec<String>, debug_requested: bool) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn determine_reload_renderer_action(
+    active_mode: ActiveMode,
+    has_renderer: bool,
+    current_shader_config: Option<&ShaderConfig>,
+    new_config: &config::AuraConfig,
+) -> ReloadRendererAction {
+    match new_config.renderer {
+        RendererMode::Image => {
+            if active_mode == ActiveMode::Shader && has_renderer {
+                ReloadRendererAction::StopShader
+            } else {
+                ReloadRendererAction::KeepImageMode
+            }
+        }
+        RendererMode::Shader => {
+            let Some(shader_config) = new_config.shader.clone() else {
+                return if active_mode == ActiveMode::Shader && has_renderer {
+                    ReloadRendererAction::KeepCurrentShader
+                } else {
+                    ReloadRendererAction::KeepImageMode
+                };
+            };
+
+            if active_mode == ActiveMode::Shader && has_renderer {
+                if current_shader_config == Some(&shader_config) {
+                    ReloadRendererAction::KeepCurrentShader
+                } else {
+                    ReloadRendererAction::ApplyShaderConfig(shader_config)
+                }
+            } else {
+                ReloadRendererAction::StartShader(shader_config)
+            }
+        }
+    }
 }
 
 fn log_config_warnings(warnings: &[ConfigWarning]) {
@@ -1136,7 +1266,10 @@ fn ensure_config_exists_with_pictures(config_path: &Path, pictures_dir: &Path) -
 mod tests {
     use super::*;
     use crate::cache::CacheManager;
-    use crate::config::{AuraConfig, ImageConfig, OutputFormat, RendererMode, UpdaterConfig};
+    use crate::config::{
+        AuraConfig, ImageConfig, OutputFormat, RendererMode, ShaderColorSpace, ShaderConfig,
+        ShaderDesktopScope, UpdaterConfig,
+    };
     use crate::sources::rss::test_support::{ResponseSpec, TestServer};
     use crate::wallpaper::WallpaperBackend;
     use image::{DynamicImage, ImageBuffer, ImageFormat, Rgba};
@@ -1146,6 +1279,71 @@ mod tests {
     use std::sync::Mutex;
     use std::time::Duration;
     use tempfile::tempdir;
+
+    #[test]
+    fn reload_keeps_current_shader_when_shader_config_is_unchanged() {
+        let tmp = tempdir().unwrap();
+        let shader_config = test_shader_config("gradient_glossy");
+        let mut config = test_config(tmp.path());
+        config.renderer = RendererMode::Shader;
+        config.shader = Some(shader_config.clone());
+
+        let action = determine_reload_renderer_action(
+            ActiveMode::Shader,
+            true,
+            Some(&shader_config),
+            &config,
+        );
+
+        assert_eq!(action, ReloadRendererAction::KeepCurrentShader);
+    }
+
+    #[test]
+    fn reload_applies_shader_config_when_shader_settings_change() {
+        let tmp = tempdir().unwrap();
+        let current_shader = test_shader_config("gradient_glossy");
+        let mut config = test_config(tmp.path());
+        config.renderer = RendererMode::Shader;
+        config.shader = Some(ShaderConfig {
+            name: "silk".to_string(),
+            ..current_shader.clone()
+        });
+
+        let action = determine_reload_renderer_action(
+            ActiveMode::Shader,
+            true,
+            Some(&current_shader),
+            &config,
+        );
+
+        assert_eq!(
+            action,
+            ReloadRendererAction::ApplyShaderConfig(config.shader.clone().unwrap())
+        );
+    }
+
+    #[test]
+    fn reload_starts_shader_when_switching_from_image_mode() {
+        let tmp = tempdir().unwrap();
+        let shader_config = test_shader_config("gradient_glossy");
+        let mut config = test_config(tmp.path());
+        config.renderer = RendererMode::Shader;
+        config.shader = Some(shader_config.clone());
+
+        let action = determine_reload_renderer_action(ActiveMode::Image, false, None, &config);
+
+        assert_eq!(action, ReloadRendererAction::StartShader(shader_config));
+    }
+
+    #[test]
+    fn reload_stops_shader_when_switching_to_image_mode() {
+        let tmp = tempdir().unwrap();
+        let config = test_config(tmp.path());
+
+        let action = determine_reload_renderer_action(ActiveMode::Shader, true, None, &config);
+
+        assert_eq!(action, ReloadRendererAction::StopShader);
+    }
 
     #[test]
     fn creates_missing_config_with_directory_source() {
@@ -1400,6 +1598,17 @@ mod tests {
             max_cache_age: Duration::from_secs(24 * 60 * 60),
             renderer: RendererMode::Image,
             shader: None,
+        }
+    }
+
+    fn test_shader_config(name: &str) -> ShaderConfig {
+        ShaderConfig {
+            name: name.to_string(),
+            target_fps: 60,
+            resolution: 100,
+            mouse_enabled: false,
+            desktop_scope: ShaderDesktopScope::Virtual,
+            color_space: ShaderColorSpace::Unorm,
         }
     }
 
