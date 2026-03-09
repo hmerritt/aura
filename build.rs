@@ -44,7 +44,75 @@ fn main() {
     );
 
     compile_precompiled_shaders(&manifest_dir, &out_dir);
+    build_settings_ui_bundle(&manifest_dir, &out_dir);
     generate_windows_resources(&manifest_dir, &out_dir);
+}
+
+fn build_settings_ui_bundle(manifest_dir: &Path, out_dir: &Path) {
+    let settings_ui_dir = manifest_dir.join("ui");
+    if !settings_ui_dir.exists() {
+        panic!(
+            "missing settings UI project directory: {}",
+            settings_ui_dir.display()
+        );
+    }
+
+    emit_rerun_if_changed_recursive(&settings_ui_dir);
+
+    let package_json = settings_ui_dir.join("package.json");
+    let bun_lock = settings_ui_dir.join("bun.lock");
+    if !package_json.exists() {
+        panic!(
+            "missing settings UI package manifest: {}",
+            package_json.display()
+        );
+    }
+    if !bun_lock.exists() {
+        panic!(
+            "missing settings UI lockfile: {}. Run `bun install` in ui first.",
+            bun_lock.display()
+        );
+    }
+
+    ensure_bun_available();
+
+    let node_modules = settings_ui_dir.join("node_modules");
+    let install_stamp = out_dir.join("ui-install.stamp");
+    if settings_ui_install_is_stale(&package_json, &bun_lock, &node_modules, &install_stamp) {
+        run_command_checked(
+            Command::new("bun")
+                .arg("install")
+                .arg("--frozen-lockfile")
+                .current_dir(&settings_ui_dir),
+            "bun install --frozen-lockfile for ui",
+        );
+        fs::write(&install_stamp, b"ok").unwrap_or_else(|error| {
+            panic!(
+                "failed to update settings UI install stamp {}: {}",
+                install_stamp.display(),
+                error
+            )
+        });
+    }
+
+    run_command_checked(
+        Command::new("bun")
+            .arg("run")
+            .arg("build")
+            .current_dir(&settings_ui_dir),
+        "bun run build for ui",
+    );
+
+    let dist_dir = settings_ui_dir.join("dist");
+    if !dist_dir.exists() {
+        panic!(
+            "settings UI dist directory is missing after build: {}",
+            dist_dir.display()
+        );
+    }
+
+    let generated_assets = out_dir.join("settings_ui_assets.rs");
+    write_settings_ui_asset_registry(&dist_dir, &generated_assets);
 }
 
 fn compile_precompiled_shaders(manifest_dir: &Path, out_dir: &Path) {
@@ -205,7 +273,7 @@ fn emit_rerun_if_changed_recursive(path: &Path) {
     if path
         .file_name()
         .and_then(|name| name.to_str())
-        .map(|name| name == "target")
+        .map(|name| matches!(name, "target" | "dist" | "node_modules"))
         .unwrap_or(false)
     {
         return;
@@ -218,6 +286,167 @@ fn emit_rerun_if_changed_recursive(path: &Path) {
             panic!("failed to read an entry from {}: {}", path.display(), error)
         });
         emit_rerun_if_changed_recursive(&entry.path());
+    }
+}
+
+fn ensure_bun_available() {
+    let output = Command::new("bun").arg("--version").output();
+    match output {
+        Ok(output) if output.status.success() => {}
+        Ok(output) => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            panic!(
+                "bun is required to build the settings UI bundle.\nstdout:\n{}\nstderr:\n{}",
+                stdout.trim(),
+                stderr.trim()
+            );
+        }
+        Err(error) => {
+            panic!(
+                "bun is required to build the settings UI bundle but was not found on PATH: {}",
+                error
+            );
+        }
+    }
+}
+
+fn settings_ui_install_is_stale(
+    package_json: &Path,
+    bun_lock: &Path,
+    node_modules: &Path,
+    install_stamp: &Path,
+) -> bool {
+    if !node_modules.exists() || !install_stamp.exists() {
+        return true;
+    }
+
+    let stamp_modified = file_modified_time(install_stamp);
+    file_modified_time(package_json) > stamp_modified
+        || file_modified_time(bun_lock) > stamp_modified
+}
+
+fn file_modified_time(path: &Path) -> SystemTime {
+    fs::metadata(path)
+        .and_then(|metadata| metadata.modified())
+        .unwrap_or(UNIX_EPOCH)
+}
+
+fn run_command_checked(command: &mut Command, description: &str) {
+    let output = command.output().unwrap_or_else(|error| {
+        panic!("failed to execute {}: {}", description, error);
+    });
+
+    if output.status.success() {
+        return;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    panic!(
+        "{} failed with status {}\nstdout:\n{}\nstderr:\n{}",
+        description,
+        output.status,
+        stdout.trim(),
+        stderr.trim()
+    );
+}
+
+fn write_settings_ui_asset_registry(dist_dir: &Path, generated_assets: &Path) {
+    let mut assets = Vec::new();
+    collect_files_recursive(dist_dir, dist_dir, &mut assets);
+    if assets.is_empty() {
+        panic!(
+            "settings UI build produced no assets in {}",
+            dist_dir.display()
+        );
+    }
+
+    assets.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let mut source = String::from("&[\n");
+    for (relative_path, asset_path) in assets {
+        let escaped_relative = relative_path.replace('\\', "/").replace('"', "\\\"");
+        let escaped_asset_path = asset_path
+            .to_string_lossy()
+            .replace('\\', "/")
+            .replace('"', "\\\"");
+        let mime_type = settings_ui_mime_type(&relative_path);
+        source.push_str(&format!(
+            "    (\"{}\", \"{}\", include_bytes!(\"{}\") as &[u8]),\n",
+            escaped_relative, mime_type, escaped_asset_path
+        ));
+    }
+    source.push_str("]\n");
+
+    fs::write(generated_assets, source).unwrap_or_else(|error| {
+        panic!(
+            "failed to write generated settings UI asset registry {}: {}",
+            generated_assets.display(),
+            error
+        )
+    });
+}
+
+fn collect_files_recursive(root: &Path, current: &Path, assets: &mut Vec<(String, PathBuf)>) {
+    let entries = fs::read_dir(current)
+        .unwrap_or_else(|error| panic!("failed to read {}: {}", current.display(), error));
+    for entry in entries {
+        let entry = entry.unwrap_or_else(|error| {
+            panic!(
+                "failed to read an entry from {}: {}",
+                current.display(),
+                error
+            )
+        });
+        let path = entry.path();
+        if path.is_dir() {
+            collect_files_recursive(root, &path, assets);
+            continue;
+        }
+
+        let relative = path
+            .strip_prefix(root)
+            .unwrap_or(&path)
+            .to_string_lossy()
+            .replace('\\', "/");
+        assets.push((relative, path));
+    }
+}
+
+fn settings_ui_mime_type(path: &str) -> &'static str {
+    if path.ends_with(".html") {
+        "text/html; charset=utf-8"
+    } else if path.ends_with(".js") || path.ends_with(".mjs") {
+        "text/javascript; charset=utf-8"
+    } else if path.ends_with(".css") {
+        "text/css; charset=utf-8"
+    } else if path.ends_with(".json") || path.ends_with(".map") {
+        "application/json; charset=utf-8"
+    } else if path.ends_with(".svg") {
+        "image/svg+xml"
+    } else if path.ends_with(".png") {
+        "image/png"
+    } else if path.ends_with(".jpg") || path.ends_with(".jpeg") {
+        "image/jpeg"
+    } else if path.ends_with(".gif") {
+        "image/gif"
+    } else if path.ends_with(".webp") {
+        "image/webp"
+    } else if path.ends_with(".ico") {
+        "image/x-icon"
+    } else if path.ends_with(".woff") {
+        "font/woff"
+    } else if path.ends_with(".woff2") {
+        "font/woff2"
+    } else if path.ends_with(".ttf") {
+        "font/ttf"
+    } else if path.ends_with(".otf") {
+        "font/otf"
+    } else if path.ends_with(".txt") {
+        "text/plain; charset=utf-8"
+    } else {
+        "application/octet-stream"
     }
 }
 

@@ -32,6 +32,12 @@ jobs:
         if: steps.tag_check.outputs.valid == 'true'
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Install Bun
+        if: steps.tag_check.outputs.valid == 'true'
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.10
+
       - name: Install rust-gpu nightly toolchain (must match shaders/rust-toolchain.toml)
         if: steps.tag_check.outputs.valid == 'true'
         shell: pwsh
