@@ -4,7 +4,7 @@ use super::desktop_windows::{
 };
 use super::precompiled;
 use super::wgpu_runtime::WgpuRuntime;
-use super::{RendererCommand, RendererEvent};
+use super::RendererEvent;
 use crate::config::ShaderConfig;
 use crate::errors::Result;
 use anyhow::{anyhow, bail, Context};
@@ -27,6 +27,11 @@ pub struct ShaderRenderer {
     proxy: EventLoopProxy<UserEvent>,
     event_rx: Option<UnboundedReceiver<RendererEvent>>,
     join_handle: Option<JoinHandle<()>>,
+}
+
+struct PendingShutdown {
+    result_rx: Option<oneshot::Receiver<Result<()>>>,
+    join_handle: JoinHandle<()>,
 }
 
 impl ShaderRenderer {
@@ -58,16 +63,6 @@ impl ShaderRenderer {
         self.event_rx.take()
     }
 
-    pub fn send_command(&self, command: RendererCommand) -> Result<()> {
-        let user_event = match command {
-            RendererCommand::Stop => UserEvent::Stop,
-        };
-        self.proxy
-            .send_event(user_event)
-            .map_err(|error| anyhow!("failed to send renderer command: {error}"))?;
-        Ok(())
-    }
-
     pub async fn apply_config(&self, config: ShaderConfig) -> Result<()> {
         let shader_bytes = resolve_shader_bytes(&config)?;
         let (result_tx, result_rx) = oneshot::channel();
@@ -84,22 +79,88 @@ impl ShaderRenderer {
         Ok(())
     }
 
-    pub fn stop(&mut self) {
-        let _ = self.send_command(RendererCommand::Stop);
-        if let Some(handle) = self.join_handle.take() {
-            let _ = handle.join();
+    pub async fn stop_async(&mut self) -> Result<()> {
+        let Some(pending) = self.begin_shutdown() else {
+            return Ok(());
+        };
+        let PendingShutdown {
+            result_rx,
+            join_handle,
+        } = pending;
+
+        if let Some(result_rx) = result_rx {
+            result_rx
+                .await
+                .context("shader renderer shutdown response channel closed before completion")??;
         }
+
+        tokio::task::spawn_blocking(move || join_handle.join())
+            .await
+            .context("failed to join shader renderer shutdown task")?
+            .map_err(|panic| anyhow!("shader renderer thread panicked during shutdown: {panic:?}"))?;
+
+        Ok(())
+    }
+
+    fn stop_blocking(&mut self) {
+        let Some(pending) = self.begin_shutdown() else {
+            return;
+        };
+        let PendingShutdown {
+            result_rx,
+            join_handle,
+        } = pending;
+
+        if let Some(result_rx) = result_rx {
+            match result_rx.blocking_recv() {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => {
+                    tracing::warn!(error = %error, "shader renderer shutdown reported an error");
+                }
+                Err(_) => {
+                    tracing::warn!(
+                        "shader renderer shutdown response channel closed before completion"
+                    );
+                }
+            }
+        }
+
+        if let Err(panic) = join_handle.join() {
+            tracing::warn!(panic = ?panic, "shader renderer thread panicked during shutdown");
+        }
+    }
+
+    fn begin_shutdown(&mut self) -> Option<PendingShutdown> {
+        let join_handle = self.join_handle.take()?;
+        let (result_tx, result_rx) = oneshot::channel();
+        let result_rx = match self.proxy.send_event(UserEvent::Shutdown { result_tx }) {
+            Ok(()) => Some(result_rx),
+            Err(error) => {
+                tracing::warn!(
+                    error = %error,
+                    "failed to send shader renderer shutdown event; joining renderer thread directly"
+                );
+                None
+            }
+        };
+
+        Some(PendingShutdown {
+            result_rx,
+            join_handle,
+        })
     }
 }
 
 impl Drop for ShaderRenderer {
     fn drop(&mut self) {
-        self.stop();
+        self.stop_blocking();
     }
 }
 
 enum UserEvent {
-    Stop,
+    Shutdown {
+        result_tx: oneshot::Sender<Result<()>>,
+    },
     ApplyConfig {
         config: ShaderConfig,
         shader_bytes: &'static [u8],
@@ -173,6 +234,31 @@ impl RendererApp {
 
     fn emit_fatal(&self, message: String) {
         let _ = self.event_tx.send(RendererEvent::Fatal { message });
+    }
+
+    fn shutdown(&mut self) -> Result<()> {
+        let started_at = Instant::now();
+        tracing::info!("shader renderer shutdown started");
+
+        if let Some(window) = self.window.as_ref() {
+            if let Ok(hwnd) = window_hwnd(window.as_ref()) {
+                show_desktop_window(hwnd, false);
+            }
+        }
+
+        if let Some(runtime) = self.runtime.take() {
+            runtime.shutdown();
+        }
+        self.window = None;
+        self.last_desktop_rect = None;
+        self.enabled = false;
+        self.paused = true;
+
+        tracing::info!(
+            elapsed_ms = started_at.elapsed().as_millis(),
+            "shader renderer shutdown finished"
+        );
+        Ok(())
     }
 
     fn apply_config(&mut self, config: ShaderConfig, shader_bytes: &'static [u8]) -> Result<()> {
@@ -409,7 +495,9 @@ impl ApplicationHandler<UserEvent> for RendererApp {
 
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: UserEvent) {
         match event {
-            UserEvent::Stop => {
+            UserEvent::Shutdown { result_tx } => {
+                let result = self.shutdown();
+                let _ = result_tx.send(result);
                 event_loop.exit();
             }
             UserEvent::ApplyConfig {
@@ -523,5 +611,33 @@ mod tests {
     #[test]
     fn computes_frame_interval_from_fps() {
         assert_eq!(frame_interval_for_target_fps(50), Duration::from_millis(20));
+    }
+
+    #[test]
+    fn shutdown_clears_runtime_state() {
+        let (event_tx, _event_rx) = mpsc::unbounded_channel();
+        let mut app = RendererApp::new(
+            ShaderConfig {
+                name: "gradient_glossy".to_string(),
+                target_fps: 60,
+                resolution: 100,
+                mouse_enabled: false,
+                desktop_scope: crate::config::ShaderDesktopScope::Virtual,
+                color_space: crate::config::ShaderColorSpace::Unorm,
+            },
+            &[],
+            event_tx,
+        );
+        app.enabled = true;
+        app.paused = false;
+        app.last_desktop_rect = Some(rect(0, 0, 1920, 1080));
+
+        app.shutdown().unwrap();
+
+        assert!(!app.enabled);
+        assert!(app.paused);
+        assert!(app.window.is_none());
+        assert!(app.runtime.is_none());
+        assert!(app.last_desktop_rect.is_none());
     }
 }

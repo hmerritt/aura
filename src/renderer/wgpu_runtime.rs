@@ -340,6 +340,49 @@ impl WgpuRuntime {
         Ok(())
     }
 
+    pub fn shutdown(self) {
+        let started_at = Instant::now();
+        tracing::info!("shader runtime shutdown started");
+
+        let WgpuRuntime {
+            _instance,
+            surface,
+            device,
+            queue,
+            config: _config,
+            scene_pipeline,
+            scene_bind_group,
+            uniform_buffer,
+            composite_pipeline,
+            composite_bind_group_layout,
+            composite_sampler,
+            internal_target,
+            started_at: _runtime_started_at,
+            frame_index: _frame_index,
+            mouse_enabled: _mouse_enabled,
+            resolution_percent: _resolution_percent,
+        } = self;
+
+        poll_device_for_shutdown(&device);
+
+        drop(internal_target);
+        drop(scene_bind_group);
+        drop(uniform_buffer);
+        drop(scene_pipeline);
+        drop(composite_pipeline);
+        drop(composite_sampler);
+        drop(composite_bind_group_layout);
+        drop(queue);
+        drop(surface);
+        drop(device);
+        drop(_instance);
+
+        tracing::info!(
+            elapsed_ms = started_at.elapsed().as_millis(),
+            "shader runtime shutdown finished"
+        );
+    }
+
     pub fn render(&mut self, mouse: [f32; 2]) -> Result<()> {
         let output = match self.surface.get_current_texture() {
             Ok(output) => output,
@@ -756,6 +799,10 @@ fn estimate_swapchain_memory_bytes(width: u32, height: u32, max_frame_latency: u
 
 fn bytes_to_megabytes(bytes: u64) -> f64 {
     bytes as f64 / (1024.0 * 1024.0)
+}
+
+fn poll_device_for_shutdown(device: &wgpu::Device) {
+    let _ = device.poll(wgpu::Maintain::Wait);
 }
 
 #[cfg(test)]

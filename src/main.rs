@@ -291,9 +291,7 @@ async fn run(args: Vec<String>, debug_requested: bool) -> Result<()> {
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {
                 info!("ctrl-c received, stopping aura");
-                if let Some(renderer) = renderer.as_mut() {
-                    renderer.stop();
-                }
+                stop_renderer(&mut renderer, "ctrl-c shutdown").await;
                 persist_state(&state_store, &rotation, last_image_id.clone())?;
                 break;
             }
@@ -348,9 +346,7 @@ async fn run(args: Vec<String>, debug_requested: bool) -> Result<()> {
                                 last_image_id.clone(),
                                 &mut _single_instance_guard,
                             ) {
-                                if let Some(renderer) = renderer.as_mut() {
-                                    renderer.stop();
-                                }
+                                stop_renderer(&mut renderer, "update restart while shader mode is active").await;
                                 break;
                             }
                         }
@@ -376,9 +372,7 @@ async fn run(args: Vec<String>, debug_requested: bool) -> Result<()> {
                         RendererEvent::Stopped => info!("shader renderer stopped"),
                         RendererEvent::Fatal { message } => {
                             warn!(error = %message, "shader renderer failed, switching to image mode");
-                            if let Some(renderer) = renderer.as_mut() {
-                                renderer.stop();
-                            }
+                            stop_renderer(&mut renderer, "shader fatal fallback").await;
                             renderer = None;
                             renderer_event_rx = None;
                             active_mode = ActiveMode::Image;
@@ -440,9 +434,7 @@ async fn run(args: Vec<String>, debug_requested: bool) -> Result<()> {
                                 &mut _single_instance_guard,
                             )
                         {
-                            if let Some(renderer) = renderer.as_mut() {
-                                renderer.stop();
-                            }
+                            stop_renderer(&mut renderer, "restart after tray wallpaper switch").await;
                             break;
                         }
                     }
@@ -561,9 +553,7 @@ async fn run(args: Vec<String>, debug_requested: bool) -> Result<()> {
                                 info!("settings reload left live shader configuration unchanged");
                             }
                             ReloadRendererAction::StopShader => {
-                                if let Some(renderer) = renderer.as_mut() {
-                                    renderer.stop();
-                                }
+                                stop_renderer(&mut renderer, "settings reload switched runtime to image mode").await;
                                 renderer = None;
                                 renderer_event_rx = None;
                                 active_mode = ActiveMode::Image;
@@ -572,9 +562,7 @@ async fn run(args: Vec<String>, debug_requested: bool) -> Result<()> {
                                 info!("settings reload switched runtime to image mode");
                             }
                             ReloadRendererAction::StartShader(shader_config) => {
-                                if let Some(renderer) = renderer.as_mut() {
-                                    renderer.stop();
-                                }
+                                stop_renderer(&mut renderer, "settings reload restarting shader mode").await;
                                 renderer = None;
                                 renderer_event_rx = None;
                                 active_mode = ActiveMode::Image;
@@ -665,9 +653,7 @@ async fn run(args: Vec<String>, debug_requested: bool) -> Result<()> {
                                 &mut _single_instance_guard,
                             )
                         {
-                            if let Some(renderer) = renderer.as_mut() {
-                                renderer.stop();
-                            }
+                            stop_renderer(&mut renderer, "restart after settings reload").await;
                             break;
                         }
 
@@ -687,17 +673,13 @@ async fn run(args: Vec<String>, debug_requested: bool) -> Result<()> {
                     }
                     Some(TrayEvent::Exit) => {
                         info!("tray requested exit, stopping aura");
-                        if let Some(renderer) = renderer.as_mut() {
-                            renderer.stop();
-                        }
+                        stop_renderer(&mut renderer, "tray exit").await;
                         persist_state(&state_store, &rotation, last_image_id.clone())?;
                         break;
                     }
                     None => {
                         info!("tray event channel closed, stopping aura");
-                        if let Some(renderer) = renderer.as_mut() {
-                            renderer.stop();
-                        }
+                        stop_renderer(&mut renderer, "tray event channel closed").await;
                         persist_state(&state_store, &rotation, last_image_id.clone())?;
                         break;
                     }
@@ -746,9 +728,7 @@ async fn run(args: Vec<String>, debug_requested: bool) -> Result<()> {
                                 &mut _single_instance_guard,
                             )
                         {
-                            if let Some(renderer) = renderer.as_mut() {
-                                renderer.stop();
-                            }
+                            stop_renderer(&mut renderer, "restart after scheduled wallpaper switch").await;
                             break;
                         }
                     }
@@ -773,6 +753,14 @@ async fn run(args: Vec<String>, debug_requested: bool) -> Result<()> {
     }
 
     Ok(())
+}
+
+async fn stop_renderer(renderer: &mut Option<ShaderRenderer>, action: &str) {
+    if let Some(renderer) = renderer.as_mut() {
+        if let Err(error) = renderer.stop_async().await {
+            warn!(error = %error, action, "failed to stop shader renderer");
+        }
+    }
 }
 
 fn determine_reload_renderer_action(

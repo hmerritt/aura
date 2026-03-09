@@ -1,9 +1,4 @@
 #[derive(Debug, Clone)]
-pub enum RendererCommand {
-    Stop,
-}
-
-#[derive(Debug, Clone)]
 pub enum RendererEvent {
     Ready,
     Running,
@@ -42,13 +37,11 @@ impl ShaderRenderer {
         None
     }
 
-    pub fn send_command(&self, _command: RendererCommand) -> Result<()> {
-        Ok(())
-    }
-
     pub async fn apply_config(&self, _config: ShaderConfig) -> Result<()> {
         anyhow::bail!("shader renderer is only supported on Windows")
     }
 
-    pub fn stop(&mut self) {}
+    pub async fn stop_async(&mut self) -> Result<()> {
+        Ok(())
+    }
 }
