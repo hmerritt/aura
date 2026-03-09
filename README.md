@@ -40,27 +40,23 @@ image = {
     { type = "directory", path = "C:/wallpapers/library", recursive = true, extensions = ["jpg", "png", "webp"] },
     { type = "rss", url = "https://example.com/feed.xml", max_items = 100 }
   ]
-  # Duration for switching to a new wallpaper: "40s" | "12m" | "3h"
-  timer = "45m"
-  # Duration for checking remote sources for new images: "40s" | "12m" | "3h"
-  remoteUpdateTimer = "1h"
-  # Target image format for wallpapers. All source images will be converted to this format before being set as wallpaper: "jpg" | "png"
-  format = "jpg"
-  # Quality for JPEG output (ignored for other formats): 1-100
-  jpeg_quality = 90
+  timer = "3h"                     # "40s" | "12m" | "3h"
+  remoteUpdateTimer = "2h"         # "40s" | "12m" | "3h"
+  format = "jpg"                   # "jpg" | "png"
+  jpeg_quality = 90                # 1-100
 }
 
 # Shader mode options (used when renderer = "shader")
 shader = {
-	name = "gradient_glossy" # "gradient_glossy" | "limestone_cave" | "dither_asci_1" | "dither_asci_2" | "dither_warp" | "silk"
-	target_fps = 50
-	resolution = 100 # 1-100 (% internal shader render resolution; output stays full-screen)
-	mouse_enabled = false
-	desktop_scope = "virtual" # "virtual" | "primary"
-	color_space = "unorm" # "unorm" | "srgb"
+  name = "gradient_glossy"         # "gradient_glossy" | "limestone_cave" | "dither_asci_1" | "dither_asci_2" | "dither_warp" | "silk"
+  target_fps = 60                  # 1-999
+  resolution = 100                 # 1-100 (% internal shader render resolution; output stays full-screen)
+  mouse_enabled = false            # false | true
+  desktop_scope = "virtual"        # "virtual" | "primary"
+  color_space = "unorm"            # "unorm" | "srgb"
 }
 
-# App update settings (Windows + Squirrel install only)
+# App update settings
 updater = {
   enabled = true
   checkInterval = "6h"
