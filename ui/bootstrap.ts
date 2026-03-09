@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 /* eslint-disable no-console */
+import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 
@@ -12,6 +13,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const pathRoot = __dirname;
 const args = [...process.argv.slice(2)];
+const cargoManifestPath = path.resolve(pathRoot, "..", "Cargo.toml");
 
 // Run bootrap
 bootstrap();
@@ -28,7 +30,7 @@ async function bootstrap() {
 	const gitCommitHash = await core.run(`git rev-parse HEAD`, pathRoot, '');
 	const gitCommitHashShort = core.shorten(gitCommitHash) || '';
 	const gitBranch = await core.getGitBranch(pathRoot);
-	const appVersion = packageJSON?.version;
+	const appVersion = readAuraVersionFromCargoManifest();
 	const appName = packageJSON?.name;
 
 	// Checks GitHub for any adrift updates.
@@ -63,4 +65,16 @@ async function bootstrap() {
 
 	// Run bootstrap script
 	core.bootstrap(env, allowEnvOverride, args, useNode, pathRoot);
+}
+
+function readAuraVersionFromCargoManifest() {
+	const cargoManifest = fs.readFileSync(cargoManifestPath, "utf8");
+	const packageSection = cargoManifest.match(/^\[package\]([\s\S]*?)(?:^\[[^\]]+\]|\Z)/m);
+	const version = packageSection?.[1]?.match(/^\s*version\s*=\s*"([^"]+)"\s*$/m)?.[1];
+
+	if (!version) {
+		throw new Error(`Unable to read aura version from ${cargoManifestPath}`);
+	}
+
+	return version;
 }
