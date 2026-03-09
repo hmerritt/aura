@@ -3,6 +3,7 @@ use crate::errors::Result;
 use crate::tray::TrayAnchor;
 use anyhow::{anyhow, bail, Context};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+use std::borrow::Cow;
 use std::ffi::c_void;
 use std::mem::size_of;
 use std::thread;
@@ -22,10 +23,13 @@ use winit::event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy};
 use winit::keyboard::{Key, NamedKey};
 use winit::platform::windows::EventLoopBuilderExtWindows;
 use winit::window::{Window, WindowId};
-use wry::{WebView, WebViewBuilder};
+use wry::http::{header::CONTENT_TYPE, Request, Response, StatusCode};
+use wry::{WebView, WebViewBuilder, WebViewBuilderExtWindows};
 
 const SETTINGS_WINDOW_TITLE: &str = "Aura Settings";
 const SETTINGS_UI_DEV_URL_ENV: &str = "AURA_SETTINGS_UI_DEV_URL";
+const SETTINGS_UI_PROTOCOL: &str = "aura-settings";
+const SETTINGS_UI_INDEX_URL: &str = "https://aura-settings.localhost/index.html";
 const POPUP_WIDTH: f64 = 650.0;
 const POPUP_HEIGHT: f64 = 750.0;
 const POPUP_GAP_PX: i32 = 8;
@@ -54,118 +58,9 @@ window.__AURA_SETTINGS_HOST = {
   }
 };
 "#;
-const PLACEHOLDER_HTML: &str = r#"<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Aura Settings</title>
-  <style>
-    :root {
-      color-scheme: light;
-      --ink: #182226;
-      --paper: #f6f1e7;
-      --panel: #fffaf2;
-      --line: #d6c9b2;
-      --accent: #2c7a64;
-      --muted: #6d6b67;
-    }
-    body {
-      margin: 0;
-      font-family: "Segoe UI", "Trebuchet MS", sans-serif;
-      color: var(--ink);
-      background:
-        radial-gradient(circle at top left, rgba(44, 122, 100, 0.18), transparent 28%),
-        linear-gradient(180deg, #fbf7ef 0%, var(--paper) 100%);
-      min-height: 100vh;
-    }
-    main {
-      max-width: 880px;
-      margin: 0 auto;
-      padding: 40px 24px 56px;
-    }
-    h1 {
-      margin: 0 0 8px;
-      font-size: 32px;
-      font-weight: 700;
-      letter-spacing: -0.03em;
-    }
-    p {
-      margin: 0 0 16px;
-      color: var(--muted);
-      line-height: 1.5;
-    }
-    .card {
-      background: rgba(255, 250, 242, 0.92);
-      border: 1px solid var(--line);
-      border-radius: 18px;
-      padding: 20px;
-      box-shadow: 0 10px 30px rgba(24, 34, 38, 0.07);
-    }
-    button {
-      border: 1px solid transparent;
-      border-radius: 999px;
-      background: var(--accent);
-      color: white;
-      padding: 10px 16px;
-      font: inherit;
-      cursor: pointer;
-    }
-    pre {
-      margin: 16px 0 0;
-      padding: 16px;
-      border-radius: 12px;
-      background: rgba(24, 34, 38, 0.05);
-      border: 1px solid rgba(24, 34, 38, 0.08);
-      overflow: auto;
-      white-space: pre-wrap;
-      word-break: break-word;
-      font-family: "Cascadia Mono", "Consolas", monospace;
-      font-size: 13px;
-    }
-  </style>
-</head>
-<body>
-  <main>
-    <h1>Settings shell ready</h1>
-    <p>This placeholder confirms the WebView host and IPC bridge are working. Replace it with a real frontend later.</p>
-    <div class="card">
-      <button id="reload" type="button">Reload config snapshot</button>
-      <pre id="log">Waiting for host...</pre>
-    </div>
-  </main>
-  <script>
-    const log = document.getElementById("log");
-    const render = (value) => {
-      log.textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2);
-    };
-
-    window.__AURA_SETTINGS_HOST.onMessage((raw) => {
-      try {
-        render(JSON.parse(raw));
-      } catch (error) {
-        render({ raw, error: String(error) });
-      }
-    });
-
-    const send = (command, payload = {}) => {
-      window.__AURA_SETTINGS_HOST.post({
-        id: `${command}-${Date.now()}`,
-        command,
-        payload
-      });
-    };
-
-    document.getElementById("reload").addEventListener("click", () => {
-      send("load_settings");
-    });
-
-    send("bootstrap");
-    send("load_settings");
-  </script>
-</body>
-</html>
-"#;
+type EmbeddedAsset = (&'static str, &'static str, &'static [u8]);
+const SETTINGS_UI_ASSETS: &[EmbeddedAsset] =
+    include!(concat!(env!("OUT_DIR"), "/settings_ui_assets.rs"));
 
 pub struct SettingsUiController {
     proxy: EventLoopProxy<UserEvent>,
@@ -214,7 +109,7 @@ impl SettingsUiController {
     pub fn spawn(event_tx: UnboundedSender<SettingsUiEvent>) -> Result<Self> {
         let (ready_tx, ready_rx) = std::sync::mpsc::channel::<Result<EventLoopProxy<UserEvent>>>();
         let join_handle = thread::Builder::new()
-            .name("aura-settings-ui".to_string())
+            .name("aura-ui".to_string())
             .spawn(move || run_settings_ui_thread(event_tx, ready_tx))
             .context("failed to spawn settings UI thread")?;
         let proxy = ready_rx
@@ -299,11 +194,15 @@ impl SettingsUiApp {
             .with_initialization_script(HOST_INIT_SCRIPT)
             .with_ipc_handler(move |request| {
                 let _ = ipc_tx.send(SettingsUiEvent::IpcMessage(request.body().to_string()));
-            });
+            })
+            .with_custom_protocol(SETTINGS_UI_PROTOCOL.into(), |_webview_id, request| {
+                serve_settings_ui_request(request)
+            })
+            .with_https_scheme(true);
         builder = if let Some(url) = self.dev_url.as_deref() {
             builder.with_url(url)
         } else {
-            builder.with_html(PLACEHOLDER_HTML)
+            builder.with_url(SETTINGS_UI_INDEX_URL)
         };
         let webview = builder
             .build(&window)
@@ -439,6 +338,50 @@ fn dispatch_json_to_webview(webview: &WebView, json: &str) -> Result<()> {
         ))
         .context("failed to evaluate settings UI response script")?;
     Ok(())
+}
+
+fn serve_settings_ui_request(request: Request<Vec<u8>>) -> Response<Cow<'static, [u8]>> {
+    let path = normalize_settings_ui_asset_path(request.uri().path());
+    if let Some((mime_type, bytes)) = lookup_settings_ui_asset(&path).or_else(|| {
+        should_fallback_to_index(&path)
+            .then(|| lookup_settings_ui_asset("index.html"))
+            .flatten()
+    }) {
+        return Response::builder()
+            .status(StatusCode::OK)
+            .header(CONTENT_TYPE, mime_type)
+            .body(Cow::Borrowed(bytes))
+            .unwrap();
+    }
+
+    Response::builder()
+        .status(StatusCode::NOT_FOUND)
+        .header(CONTENT_TYPE, "text/plain; charset=utf-8")
+        .body(Cow::Owned(
+            format!("missing settings UI asset: {path}").into_bytes(),
+        ))
+        .unwrap()
+}
+
+fn normalize_settings_ui_asset_path(path: &str) -> String {
+    let trimmed = path.trim().trim_start_matches('/');
+    if trimmed.is_empty() {
+        "index.html".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn lookup_settings_ui_asset(path: &str) -> Option<(&'static str, &'static [u8])> {
+    SETTINGS_UI_ASSETS
+        .iter()
+        .find_map(|(asset_path, mime_type, bytes)| {
+            (*asset_path == path).then_some((*mime_type, *bytes))
+        })
+}
+
+fn should_fallback_to_index(path: &str) -> bool {
+    !path.is_empty() && !path.contains('.') && !path.ends_with('/')
 }
 
 fn apply_rounded_corners(window: &Window) {
@@ -714,5 +657,19 @@ mod tests {
     #[test]
     fn rounded_corner_preference_uses_native_rounding() {
         assert_eq!(rounded_corner_preference(), DWMWCP_ROUND);
+    }
+
+    #[test]
+    fn root_asset_path_maps_to_index() {
+        assert_eq!(normalize_settings_ui_asset_path("/"), "index.html");
+        assert_eq!(normalize_settings_ui_asset_path(""), "index.html");
+    }
+
+    #[test]
+    fn route_like_paths_fallback_to_index() {
+        assert!(should_fallback_to_index("settings"));
+        assert!(should_fallback_to_index("settings/profile"));
+        assert!(!should_fallback_to_index("assets/app.js"));
+        assert!(!should_fallback_to_index("assets/style.css"));
     }
 }

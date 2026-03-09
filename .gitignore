@@ -4,3 +4,5 @@ dist/
 /shaders/*.spv
 /shaders/**/Cargo.lock
 /target
+/ui/dist
+/ui/node_modules
