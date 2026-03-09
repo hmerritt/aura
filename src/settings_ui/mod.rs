@@ -21,7 +21,7 @@ impl SettingsUiController {
         anyhow::bail!("settings UI is only supported on Windows")
     }
 
-    pub fn open_window(&self) -> crate::errors::Result<()> {
+    pub fn open_window(&self, _anchor: crate::tray::TrayAnchor) -> crate::errors::Result<()> {
         anyhow::bail!("settings UI is only supported on Windows")
     }
 

@@ -564,7 +564,7 @@ async fn run(args: Vec<String>, debug_requested: bool) -> Result<()> {
                             }
                         }
                     }
-                    Some(TrayEvent::OpenSettingsWindow) => {
+                    Some(TrayEvent::OpenSettingsWindow(anchor)) => {
                         if settings_ui_controller.is_none() {
                             match SettingsUiController::spawn(settings_ui_event_tx.clone()) {
                                 Ok(controller) => settings_ui_controller = Some(controller),
@@ -580,7 +580,7 @@ async fn run(args: Vec<String>, debug_requested: bool) -> Result<()> {
                         }
 
                         if let Some(controller) = settings_ui_controller.as_ref() {
-                            if let Err(error) = controller.open_window() {
+                            if let Err(error) = controller.open_window(anchor) {
                                 warn!(error = %error, "failed to open settings window");
                                 settings_ui_controller = None;
                                 crash_ui::show_error_dialog(
