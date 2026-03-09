@@ -1,12 +1,461 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Aura Settings</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
-  </body>
-  </html>
+    <head>
+        <meta charset="UTF-8" />
+
+        <!--
+          This viewport works for phones with notches.
+          It's optimized for gestures by disabling global zoom.
+        -->
+        <meta
+            name="viewport"
+            content="width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1.00001, viewport-fit=cover"
+        />
+
+        <title>aura</title>
+
+        <style type="text/css">
+            /**
+              * Main background color (set here to avoid flash on load)
+              */
+            body {
+                background-color: #ffffff;
+            }
+
+            body {
+                font-family:
+                    'MiSans',
+                    Tahoma,
+                    'Roboto',
+                    -apple-system,
+                    BlinkMacSystemFont,
+                    sans-serif;
+                font-smooth: always;
+                touch-action: manipulation;
+                font-smoothing: antialiased;
+                text-rendering: optimizeLegibility;
+                /* Platform-specific reset */
+                -webkit-overflow-scrolling: touch;
+                -webkit-text-size-adjust: 100%;
+                -webkit-font-smoothing: antialiased;
+                -moz-osx-font-smoothing: grayscale;
+                -ms-overflow-style: scrollbar;
+                font-synthesis-weight: none;
+
+                /**
+                  * We need these styles to prevent shifting due to scrollbar show/hide on
+                  * OSs that have them enabled by default. This also handles cases where the
+                  * screen wouldn't otherwise scroll, and therefore hide the scrollbar and
+                  * shift the content, by forcing the page to show a scrollbar.
+                  */
+                width: 100%;
+                overflow-y: scroll;
+            }
+
+            /* RESET */
+
+            @layer priority1 {
+                a,
+                abbr,
+                acronym,
+                address,
+                applet,
+                article,
+                aside,
+                audio,
+                b,
+                big,
+                blockquote,
+                body,
+                canvas,
+                caption,
+                center,
+                cite,
+                code,
+                dd,
+                del,
+                details,
+                dfn,
+                div,
+                dl,
+                dt,
+                em,
+                embed,
+                fieldset,
+                figcaption,
+                figure,
+                footer,
+                form,
+                h1,
+                h2,
+                h3,
+                h4,
+                h5,
+                h6,
+                header,
+                hgroup,
+                html,
+                i,
+                iframe,
+                img,
+                ins,
+                kbd,
+                label,
+                legend,
+                li,
+                mark,
+                menu,
+                nav,
+                object,
+                ol,
+                output,
+                p,
+                pre,
+                q,
+                ruby,
+                s,
+                samp,
+                section,
+                small,
+                span,
+                strike,
+                strong,
+                sub,
+                summary,
+                sup,
+                table,
+                tbody,
+                td,
+                tfoot,
+                th,
+                thead,
+                time,
+                tr,
+                tt,
+                u,
+                ul,
+                var,
+                video {
+                    margin: 0;
+                    /* padding: 0; */
+                    border: 0;
+                    font-size: 100%;
+                    font: inherit;
+                    vertical-align: baseline;
+                }
+                /* make sure to set some focus styles for accessibility */
+                :focus {
+                    outline: 0 !important;
+                    border-color: transparent;
+                }
+                /* HTML5 display-role reset for older browsers */
+
+                article,
+                aside,
+                details,
+                figcaption,
+                figure,
+                footer,
+                header,
+                hgroup,
+                menu,
+                nav,
+                section {
+                    display: block;
+                }
+
+                body {
+                    line-height: 1.2;
+                }
+
+                ol,
+                ul {
+                    list-style: none;
+                }
+
+                blockquote,
+                q {
+                    quotes: none;
+                }
+
+                blockquote:after,
+                blockquote:before,
+                q:after,
+                q:before {
+                    content: '';
+                    content: none;
+                }
+
+                table {
+                    border-collapse: collapse;
+                    border-spacing: 0;
+                }
+
+                input[type='search']::-webkit-search-cancel-button,
+                input[type='search']::-webkit-search-decoration,
+                input[type='search']::-webkit-search-results-button,
+                input[type='search']::-webkit-search-results-decoration {
+                    -webkit-appearance: none;
+                    -moz-appearance: none;
+                }
+
+                input[type='search'] {
+                    -webkit-appearance: none;
+                    -moz-appearance: none;
+                    -webkit-box-sizing: content-box;
+                    -moz-box-sizing: content-box;
+                    box-sizing: content-box;
+                }
+
+                textarea {
+                    overflow: auto;
+                    vertical-align: top;
+                    resize: vertical;
+                }
+                /**
+				 * Improve readability when focused and also mouse hovered in all browsers.
+				 */
+                a:active,
+                a:hover,
+                a:focus {
+                    outline: 0;
+                }
+                /**
+				 * Address inconsistent `text-transform` inheritance for `button` and `select`.
+				 * All other form control elements do not inherit `text-transform` values.
+				 * Correct `button` style inheritance in Chrome, Safari 5+, and IE 6+.
+				 * Correct `select` style inheritance in Firefox 4+ and Opera.
+				 */
+                button,
+                select {
+                    text-transform: none;
+                }
+                /**
+				 * 1. Avoid the WebKit bug in Android 4.0.* where (2) destroys native `audio`
+				 *    and `video` controls.
+				 * 2. Correct inability to style clickable `input` types in iOS.
+				 * 3. Improve usability and consistency of cursor style between image-type
+				 *    `input` and others.
+				 * 4. Remove inner spacing in IE 7 without affecting normal text inputs.
+				 *    Known issue: inner spacing remains in IE 6.
+				 */
+                button, html input[type="button"],/* 1 */
+
+input[type="reset"],
+input[type="submit"] {
+                    -webkit-appearance: button;
+                    /* 2 */
+                    cursor: pointer;
+                    /* 3 */
+                    overflow: visible;
+                    /* 4 */
+                }
+                /**
+				 * Re-set default cursor for disabled elements.
+				 */
+                button[disabled],
+                html input[disabled] {
+                    cursor: default;
+                }
+                /**
+				 * 1. Address box sizing set to content-box in IE 8/9.
+				 * 2. Remove excess padding in IE 8/9.
+				 * 3. Remove excess padding in IE 7.
+				 *    Known issue: excess padding remains in IE 6.
+				 */
+                input[type='checkbox'],
+                input[type='radio'] {
+                    box-sizing: border-box;
+                    /* 1 */
+                    padding: 0;
+                    /* 2 */
+                    height: 13px;
+                    /* 3 */
+                    width: 13px;
+                    /* 3 */
+                }
+                /**
+				 * 1. Address `appearance` set to `searchfield` in Safari 5 and Chrome.
+				 * 2. Address `box-sizing` set to `border-box` in Safari 5 and Chrome
+				 *    (include `-moz` to future-proof).
+				 */
+                input[type='search'] {
+                    -webkit-appearance: textfield;
+                    /* 1 */
+                    -moz-box-sizing: content-box;
+                    -webkit-box-sizing: content-box;
+                    /* 2 */
+                    box-sizing: content-box;
+                }
+                /**
+				 * Remove inner padding and search cancel button in Safari 5 and Chrome
+				 * on OS X.
+				 */
+                input[type='search']::-webkit-search-cancel-button,
+                input[type='search']::-webkit-search-decoration {
+                    -webkit-appearance: none;
+                }
+                /**
+				 * Remove inner padding and border in Firefox 3+.
+				 */
+                button::-moz-focus-inner,
+                input::-moz-focus-inner {
+                    border: 0;
+                    padding: 0;
+                }
+                /**
+				 * 1. Remove default vertical scrollbar in IE 6/7/8/9.
+				 * 2. Improve readability and alignment in all browsers.
+				 */
+                textarea {
+                    overflow: auto;
+                    /* 1 */
+                    vertical-align: top;
+                    /* 2 */
+                }
+                /**
+				 * Remove most spacing between table cells.
+				 */
+                table {
+                    border-collapse: collapse;
+                    border-spacing: 0;
+                }
+
+                button,
+                html,
+                input,
+                select,
+                textarea {
+                    color: #222;
+                }
+
+                img {
+                    vertical-align: middle;
+                }
+
+                textarea {
+                    resize: vertical;
+                }
+
+                a,
+                a:hover,
+                a:active,
+                a:target {
+                    color: #1a73e8;
+                    cursor: pointer;
+                    text-decoration: none;
+                }
+
+                /* 
+				 * 
+				 * Custom reset
+				 *
+				 */
+
+                /** Use a more-intuitive box-sizing model. */
+                *,
+                *::before,
+                *::after {
+                    box-sizing: border-box;
+                }
+
+                /** Remove default margin */
+                * {
+                    margin: 0;
+                }
+
+                /** Allow percentage-based heights in the application */
+                html,
+                body {
+                    height: 100%;
+                    -webkit-tap-highlight-color: transparent;
+                }
+
+                /** 1 rem = 10px :) */
+                html {
+                    font-size: 62.5%;
+                    scroll-padding-top: 2.5rem;
+                }
+
+                @supports (text-wrap: balance) {
+                    h1,
+                    h2,
+                    h3,
+                    h4,
+                    h5,
+                    h6 {
+                        text-wrap: balance;
+                    }
+                }
+
+                @supports (text-wrap: pretty) {
+                    p,
+                    li,
+                    blockquote,
+                    figcaption {
+                        text-wrap: pretty;
+                    }
+                }
+
+                h1,
+                h2,
+                h3,
+                h4,
+                h5 {
+                    color: #222222;
+                    cursor: default;
+                }
+
+                h1,
+                h2 {
+                    color: #222222;
+                    font-weight: bold;
+                }
+
+                small {
+                    font-size: 80%;
+                }
+
+                strong {
+                    font-weight: bold;
+                }
+
+                img {
+                    transition: opacity 80ms ease-in-out;
+                }
+
+                svg {
+                    width: 1rem;
+                    height: 1rem;
+                }
+
+                ::selection,
+                ::-moz-selection {
+                    text-shadow: none;
+                    background: #b3d4fc;
+                }
+
+                ::-webkit-scrollbar {
+                    width: 1rem;
+                }
+                ::-webkit-scrollbar-track {
+                    border-radius: 1000px;
+                    background: transparent;
+                }
+                ::-webkit-scrollbar-thumb {
+                    border-radius: 1000px;
+                    background: #b1b1b1;
+                }
+                ::-webkit-scrollbar-thumb:hover {
+                    background: #7e7e7e;
+                }
+            }
+        </style>
+    </head>
+    <body>
+        <noscript>You need to enable JavaScript to run this app.</noscript>
+        <div id="root"></div>
+        <script type="module" src="/src/lib/global/index.ts"></script>
+        <script type="module" src="/src/index.tsx"></script>
+    </body>
+</html>

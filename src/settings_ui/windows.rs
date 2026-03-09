@@ -29,7 +29,7 @@ use wry::{WebView, WebViewBuilder, WebViewBuilderExtWindows};
 const SETTINGS_WINDOW_TITLE: &str = "Aura Settings";
 const SETTINGS_UI_DEV_URL_ENV: &str = "AURA_SETTINGS_UI_DEV_URL";
 const SETTINGS_UI_PROTOCOL: &str = "aura-settings";
-const SETTINGS_UI_INDEX_URL: &str = "https://aura-settings.localhost/index.html";
+const SETTINGS_UI_INDEX_URL: &str = "https://aura-settings.localhost/";
 const POPUP_WIDTH: f64 = 650.0;
 const POPUP_HEIGHT: f64 = 750.0;
 const POPUP_GAP_PX: i32 = 8;

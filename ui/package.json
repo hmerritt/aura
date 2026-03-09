@@ -1,23 +1,105 @@
 {
-  "name": "aura-ui",
-  "private": true,
-  "version": "0.0.0",
-  "type": "module",
-  "packageManager": "bun@1.3.10",
-  "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "typecheck": "tsc --noEmit"
-  },
-  "dependencies": {
-    "react": "latest",
-    "react-dom": "latest"
-  },
-  "devDependencies": {
-    "@types/react": "latest",
-    "@types/react-dom": "latest",
-    "@vitejs/plugin-react": "latest",
-    "typescript": "latest",
-    "vite": "latest"
-  }
+    "name": "aura-ui",
+    "private": true,
+    "version": "0.0.0",
+    "type": "module",
+    "packageManager": "bun@1.3.10",
+    "scripts": {
+        "build": "bun run typecheck && bun run bootstrap vite build",
+        "dev": "bun run bootstrap.ts vite --host",
+        "lint": "bun run lint:fast && bun run lint:eslint && bun run typecheck",
+        "lint:eslint": "eslint .",
+        "lint:fast": "oxlint . --react-plugin --vitest-plugin --import-plugin",
+        "lint:fix": "oxlint . --react-plugin --vitest-plugin --import-plugin --fix",
+        "preview": "bun run typecheck && bun run bootstrap vite preview --host",
+        "start": "bun run bootstrap vite --host",
+        "test": "bun run bootstrap vitest run",
+        "test:bench": "bun run bootstrap vitest bench",
+        "test:coverage": "bun run bootstrap --bun:node vitest run --coverage --silent",
+        "test:watch": "bun run bootstrap vitest watch --ui --api 9527",
+        "typecheck": "tsgo --noEmit",
+        "react-doctor": "bun run bootstrap react-doctor --verbose",
+        "update": "bun update -i"
+    },
+    "dependencies": {
+        "@dnd-kit/core": "6.3.1",
+        "@dnd-kit/sortable": "10.0.0",
+        "@dnd-kit/utilities": "3.2.2",
+        "@stylexjs/stylex": "0.17.5",
+        "@tanstack/pacer": "0.19.0",
+        "@tanstack/react-hotkeys": "0.3.0",
+        "@tanstack/react-router": "1.163.2",
+        "@tanstack/react-store": "0.9.1",
+        "@tanstack/react-virtual": "3.13.19",
+        "@tanstack/router-plugin": "1.163.2",
+        "@tanstack/store": "0.9.1",
+        "animejs": "4.3.6",
+        "dayjs": "1.11.19",
+        "ky": "1.14.3",
+        "plausible-tracker": "0.3.9",
+        "react": "19.2.4",
+        "react-dom": "19.2.4"
+    },
+    "devDependencies": {
+        "@babel/core": "7.29.0",
+        "@babel/plugin-syntax-jsx": "7.28.6",
+        "@babel/plugin-syntax-typescript": "7.28.6",
+        "@eslint/compat": "2.0.2",
+        "@nabla/vite-plugin-eslint": "2.0.6",
+        "@playwright/test": "1.58.2",
+        "@stylexjs/babel-plugin": "0.17.5",
+        "@stylexjs/eslint-plugin": "0.17.5",
+        "@tanstack/react-router-devtools": "1.163.2",
+        "@testing-library/dom": "10.4.1",
+        "@testing-library/jest-dom": "6.9.1",
+        "@testing-library/react": "16.3.2",
+        "@testing-library/react-hooks": "8.0.1",
+        "@testing-library/user-event": "14.6.1",
+        "@trivago/prettier-plugin-sort-imports": "6.0.2",
+        "@types/bun": "1.3.9",
+        "@types/css": "0.0.38",
+        "@types/react": "19.2.14",
+        "@types/react-dom": "19.2.3",
+        "@typescript-eslint/eslint-plugin": "8.56.1",
+        "@typescript-eslint/parser": "8.56.1",
+        "@typescript/native-preview": "7.0.0-dev.20260226.1",
+        "@vitejs/plugin-react": "5.1.4",
+        "@vitest/coverage-v8": "4.0.18",
+        "@vitest/ui": "4.0.18",
+        "babel-plugin-react-compiler": "1.0.0",
+        "cross-env": "10.1.0",
+        "css": "3.0.0",
+        "eslint": "10.0.2",
+        "eslint-plugin-react-compiler": "19.1.0-rc.2",
+        "eslint-plugin-react-hooks": "7.0.1",
+        "globals": "17.3.0",
+        "jsdom": "28.1.0",
+        "oxlint": "1.50.0",
+        "prettier": "3.8.1",
+        "react-doctor": "0.0.29",
+        "react-scan": "0.5.3",
+        "tsx": "4.21.0",
+        "typescript-eslint": "8.56.1",
+        "vite": "7.3.1",
+        "vite-bundle-visualizer": "1.2.1",
+        "vite-plugin-minify": "2.1.0",
+        "vite-tsconfig-paths": "6.1.1",
+        "vitest": "4.0.18"
+    },
+    "overrides": {
+        "zod-validation-error": "4.0.2"
+    },
+    "browserslist": {
+        "production": [
+            ">5%",
+            "not dead"
+        ],
+        "development": [
+            ">5%",
+            "not dead"
+        ]
+    },
+    "engines": {
+        "bun": ">=1.3.9"
+    }
 }
