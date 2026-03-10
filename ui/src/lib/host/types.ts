@@ -60,6 +60,10 @@ export interface SettingsDocument {
 export interface SettingsLoadResult {
   document: SettingsDocument;
   warnings: ConfigWarning[];
+  imagePreview: {
+    currentSrc: string | null;
+    nextSrc: string | null;
+  };
 }
 
 export interface SettingsValidationResult {

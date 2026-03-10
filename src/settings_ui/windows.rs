@@ -1,11 +1,13 @@
-use super::SettingsUiEvent;
+use super::{PreviewAsset, SettingsUiEvent};
 use crate::errors::Result;
 use crate::tray::TrayAnchor;
 use anyhow::{anyhow, bail, Context};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use std::borrow::Cow;
 use std::ffi::c_void;
+use std::fs;
 use std::mem::size_of;
+use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::thread::JoinHandle;
 use tokio::sync::mpsc::UnboundedSender;
@@ -23,7 +25,10 @@ use winit::event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy};
 use winit::keyboard::{Key, NamedKey};
 use winit::platform::windows::EventLoopBuilderExtWindows;
 use winit::window::{Window, WindowId};
-use wry::http::{header::CONTENT_TYPE, Request, Response, StatusCode};
+use wry::http::{
+    header::{CACHE_CONTROL, CONTENT_TYPE},
+    Request, Response, StatusCode,
+};
 use wry::{WebView, WebViewBuilder, WebViewBuilderExtWindows};
 
 const SETTINGS_WINDOW_TITLE: &str = "Aura Settings";
@@ -83,6 +88,18 @@ struct SettingsUiApp {
     close_on_focus_loss_armed: bool,
 }
 
+#[derive(Debug, Default, Clone)]
+struct PreviewRegistry {
+    current: Option<PreviewAsset>,
+    next: Option<PreviewAsset>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PreviewSlot {
+    Current,
+    Next,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct PopupPlacement {
     position: PhysicalPosition<i32>,
@@ -140,6 +157,27 @@ impl SettingsUiController {
             .send_event(UserEvent::DispatchJson(json))
             .map_err(|error| anyhow!("failed to send settings UI response: {error}"))?;
         Ok(())
+    }
+}
+
+pub fn set_preview_assets(current: Option<PreviewAsset>, next: Option<PreviewAsset>) {
+    let mut registry = preview_registry()
+        .lock()
+        .expect("settings preview registry lock poisoned");
+    registry.current = current;
+    registry.next = next;
+}
+
+pub fn set_next_preview_asset_if_revision(next: PreviewAsset) {
+    let mut registry = preview_registry()
+        .lock()
+        .expect("settings preview registry lock poisoned");
+    if registry
+        .next
+        .as_ref()
+        .is_some_and(|current| current.revision == next.revision)
+    {
+        registry.next = Some(next);
     }
 }
 
@@ -341,6 +379,10 @@ fn dispatch_json_to_webview(webview: &WebView, json: &str) -> Result<()> {
 }
 
 fn serve_settings_ui_request(request: Request<Vec<u8>>) -> Response<Cow<'static, [u8]>> {
+    if let Some(response) = serve_preview_request(&request) {
+        return response;
+    }
+
     let path = normalize_settings_ui_asset_path(request.uri().path());
     if let Some((mime_type, bytes)) = lookup_settings_ui_asset(&path).or_else(|| {
         should_fallback_to_index(&path)
@@ -359,6 +401,66 @@ fn serve_settings_ui_request(request: Request<Vec<u8>>) -> Response<Cow<'static,
         .header(CONTENT_TYPE, "text/plain; charset=utf-8")
         .body(Cow::Owned(
             format!("missing settings UI asset: {path}").into_bytes(),
+        ))
+        .unwrap()
+}
+
+fn preview_registry() -> &'static Mutex<PreviewRegistry> {
+    static PREVIEW_REGISTRY: OnceLock<Mutex<PreviewRegistry>> = OnceLock::new();
+    PREVIEW_REGISTRY.get_or_init(|| Mutex::new(PreviewRegistry::default()))
+}
+
+fn serve_preview_request(request: &Request<Vec<u8>>) -> Option<Response<Cow<'static, [u8]>>> {
+    let slot = match normalize_settings_ui_asset_path(request.uri().path()).as_str() {
+        "preview/current" => PreviewSlot::Current,
+        "preview/next" => PreviewSlot::Next,
+        _ => return None,
+    };
+    let Some(revision) = preview_request_revision(request.uri().query()) else {
+        return Some(preview_not_found_response(slot, "missing preview revision"));
+    };
+    let Some(asset) = preview_asset(slot, revision) else {
+        return Some(preview_not_found_response(slot, "preview is unavailable"));
+    };
+
+    Some(match fs::read(&asset.path) {
+        Ok(bytes) => Response::builder()
+            .status(StatusCode::OK)
+            .header(CONTENT_TYPE, asset.mime_type)
+            .header(CACHE_CONTROL, "no-store")
+            .body(Cow::Owned(bytes))
+            .unwrap(),
+        Err(error) => preview_not_found_response(slot, &format!("failed to read preview: {error}")),
+    })
+}
+
+fn preview_request_revision(query: Option<&str>) -> Option<&str> {
+    query.and_then(|query| {
+        query.split('&').find_map(|part| {
+            let (key, value) = part.split_once('=')?;
+            (key == "rev" && !value.is_empty()).then_some(value)
+        })
+    })
+}
+
+fn preview_asset(slot: PreviewSlot, requested_revision: &str) -> Option<PreviewAsset> {
+    let registry = preview_registry()
+        .lock()
+        .expect("settings preview registry lock poisoned");
+    let asset = match slot {
+        PreviewSlot::Current => registry.current.as_ref(),
+        PreviewSlot::Next => registry.next.as_ref(),
+    }?;
+    (asset.revision == requested_revision).then(|| asset.clone())
+}
+
+fn preview_not_found_response(slot: PreviewSlot, message: &str) -> Response<Cow<'static, [u8]>> {
+    Response::builder()
+        .status(StatusCode::NOT_FOUND)
+        .header(CONTENT_TYPE, "text/plain; charset=utf-8")
+        .header(CACHE_CONTROL, "no-store")
+        .body(Cow::Owned(
+            format!("missing {slot:?} preview: {message}").into_bytes(),
         ))
         .unwrap()
 }
@@ -576,6 +678,8 @@ impl RectBounds {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use tempfile::tempdir;
 
     fn rect(left: i32, top: i32, right: i32, bottom: i32) -> RectBounds {
         RectBounds {
@@ -671,5 +775,61 @@ mod tests {
         assert!(should_fallback_to_index("settings/profile"));
         assert!(!should_fallback_to_index("assets/app.js"));
         assert!(!should_fallback_to_index("assets/style.css"));
+    }
+
+    #[test]
+    fn preview_request_serves_registered_current_asset() {
+        let tmp = tempdir().unwrap();
+        let preview_path = tmp.path().join("preview.png");
+        fs::write(&preview_path, b"preview-bytes").unwrap();
+        set_preview_assets(
+            Some(PreviewAsset {
+                revision: "current-rev".to_string(),
+                path: preview_path,
+                mime_type: "image/png".to_string(),
+            }),
+            None,
+        );
+
+        let response = serve_settings_ui_request(
+            Request::builder()
+                .uri("https://aura-settings.localhost/preview/current?rev=current-rev")
+                .body(Vec::new())
+                .unwrap(),
+        );
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers().get(CONTENT_TYPE).unwrap(), "image/png");
+        assert_eq!(response.headers().get(CACHE_CONTROL).unwrap(), "no-store");
+        assert_eq!(response.body().as_ref(), b"preview-bytes");
+
+        set_preview_assets(None, None);
+    }
+
+    #[test]
+    fn preview_request_404s_when_revision_does_not_match() {
+        let tmp = tempdir().unwrap();
+        let preview_path = tmp.path().join("preview.png");
+        fs::write(&preview_path, b"preview-bytes").unwrap();
+        set_preview_assets(
+            Some(PreviewAsset {
+                revision: "current-rev".to_string(),
+                path: preview_path,
+                mime_type: "image/png".to_string(),
+            }),
+            None,
+        );
+
+        let response = serve_settings_ui_request(
+            Request::builder()
+                .uri("https://aura-settings.localhost/preview/current?rev=stale-rev")
+                .body(Vec::new())
+                .unwrap(),
+        );
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        assert_eq!(response.headers().get(CACHE_CONTROL).unwrap(), "no-store");
+
+        set_preview_assets(None, None);
     }
 }

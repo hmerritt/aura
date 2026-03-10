@@ -121,6 +121,10 @@ function createMockBridge(): AuraHostBridge {
             payload: {
               document: state.document,
               warnings: [],
+              imagePreview: {
+                currentSrc: null,
+                nextSrc: null,
+              },
             } satisfies SettingsLoadResult,
           });
           break;
@@ -144,6 +148,10 @@ function createMockBridge(): AuraHostBridge {
               result: {
                 document: state.document,
                 warnings: [],
+                imagePreview: {
+                  currentSrc: null,
+                  nextSrc: null,
+                },
               },
               restartRequested: false,
             } satisfies SaveSettingsPayload,

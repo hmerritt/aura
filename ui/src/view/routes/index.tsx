@@ -4,38 +4,16 @@ import { useEffect, useState } from "react";
 
 import { env } from "lib/global/env";
 import { auraSettingsHost } from "lib/host/client";
-import { type RendererMode, type SettingsDocument } from "lib/host/types";
+import {
+	type RendererMode,
+	type SettingsLoadResult
+} from "lib/host/types";
 
 import { Shader } from "view/components/experimental/Shader";
 
 export const Route = createFileRoute("/")({
 	component: IndexRoute
 });
-
-const IMAGE_MODE_PLACEHOLDER_SRC = `data:image/svg+xml;utf8,${encodeURIComponent(`
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 640" fill="none">
-	<defs>
-		<linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
-			<stop offset="0%" stop-color="#d7e6ff" />
-			<stop offset="52%" stop-color="#edf4ff" />
-			<stop offset="100%" stop-color="#f8f8f4" />
-		</linearGradient>
-		<linearGradient id="ridge" x1="0" y1="0" x2="1" y2="1">
-			<stop offset="0%" stop-color="#415d79" />
-			<stop offset="100%" stop-color="#6f8aa5" />
-		</linearGradient>
-		<linearGradient id="field" x1="0" y1="0" x2="1" y2="1">
-			<stop offset="0%" stop-color="#8fa4bc" />
-			<stop offset="100%" stop-color="#d7dfeb" />
-		</linearGradient>
-	</defs>
-	<rect width="960" height="640" fill="url(#sky)" />
-	<circle cx="748" cy="132" r="58" fill="#fffef7" opacity=".78" />
-	<path d="M0 404c68-54 138-83 211-87 89-5 150 33 219 32 88-1 150-67 240-66 107 1 183 59 290 140v214H0V404Z" fill="url(#ridge)" />
-	<path d="M0 476c82-48 170-76 260-70 109 8 162 65 267 65 91 0 170-49 252-46 74 3 135 31 181 66v146H0V476Z" fill="url(#field)" />
-	<path d="M224 206c52 12 98 29 138 51" stroke="#ffffff" stroke-width="12" stroke-linecap="round" opacity=".55" />
-</svg>
-`)}`;
 
 const SHADER_MODE_PREVIEW = `void mainImage(out vec4 fragColor, vec2 fragCoord) {
 	vec2 uv = fragCoord / iResolution.xy;
@@ -48,7 +26,7 @@ const SHADER_MODE_PREVIEW = `void mainImage(out vec4 fragColor, vec2 fragCoord) 
 }`;
 
 export function IndexRoute() {
-	const [document, setDocument] = useState<SettingsDocument | null>(null);
+	const [settings, setSettings] = useState<SettingsLoadResult | null>(null);
 	const [hasLoadError, setHasLoadError] = useState(false);
 
 	useEffect(() => {
@@ -58,7 +36,7 @@ export function IndexRoute() {
 			.request("load_settings", {})
 			.then((result) => {
 				if (!isMounted) return;
-				setDocument(result.document);
+				setSettings(result);
 				setHasLoadError(false);
 			})
 			.catch(() => {
@@ -71,14 +49,21 @@ export function IndexRoute() {
 		};
 	}, []);
 
-	const selectedRenderer = document?.renderer ?? null;
-	const canSelectMode = document !== null;
+	const selectedRenderer = settings?.document.renderer ?? null;
+	const canSelectMode = settings !== null;
+	const imageModePreviewSrc =
+		selectedRenderer === "image"
+			? settings?.imagePreview.currentSrc ?? settings?.imagePreview.nextSrc ?? null
+			: settings?.imagePreview.nextSrc ?? settings?.imagePreview.currentSrc ?? null;
 	const setRenderer = (renderer: RendererMode) => {
-		setDocument((current) => {
+		setSettings((current) => {
 			if (!current) return current;
 			return {
 				...current,
-				renderer
+				document: {
+					...current.document,
+					renderer
+				}
 			};
 		});
 	};
@@ -129,13 +114,15 @@ export function IndexRoute() {
 								mode="image"
 								onSelect={setRenderer}
 								preview={
-									<img
+									imageModePreviewSrc ? (
+										<img
 										alt=""
 										aria-hidden="true"
 										data-testid="image-mode-preview"
-										src={IMAGE_MODE_PLACEHOLDER_SRC}
+										src={imageModePreviewSrc}
 										{...stylex.props(styles.media)}
 									/>
+									) : null
 								}
 								disabled={!canSelectMode}
 							/>

@@ -1,3 +1,12 @@
+use std::path::PathBuf;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreviewAsset {
+    pub revision: String,
+    pub path: PathBuf,
+    pub mime_type: String,
+}
+
 #[derive(Debug, Clone)]
 pub enum SettingsUiEvent {
     IpcMessage(String),
@@ -10,8 +19,24 @@ mod windows;
 #[cfg(windows)]
 pub use windows::SettingsUiController;
 
+#[cfg(windows)]
+pub fn set_preview_assets(current: Option<PreviewAsset>, next: Option<PreviewAsset>) {
+    windows::set_preview_assets(current, next);
+}
+
+#[cfg(windows)]
+pub fn set_next_preview_asset_if_revision(next: PreviewAsset) {
+    windows::set_next_preview_asset_if_revision(next);
+}
+
 #[cfg(not(windows))]
 pub struct SettingsUiController;
+
+#[cfg(not(windows))]
+pub fn set_preview_assets(_current: Option<PreviewAsset>, _next: Option<PreviewAsset>) {}
+
+#[cfg(not(windows))]
+pub fn set_next_preview_asset_if_revision(_next: PreviewAsset) {}
 
 #[cfg(not(windows))]
 impl SettingsUiController {

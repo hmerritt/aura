@@ -225,11 +225,21 @@ pub struct ConfigWithWarnings {
 pub struct SettingsLoadResult {
     pub document: SettingsDocument,
     pub warnings: Vec<ConfigWarning>,
+    #[serde(rename = "imagePreview")]
+    pub image_preview: SettingsImagePreview,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SettingsValidationResult {
     pub warnings: Vec<ConfigWarning>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SettingsImagePreview {
+    #[serde(rename = "currentSrc")]
+    pub current_src: Option<String>,
+    #[serde(rename = "nextSrc")]
+    pub next_src: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -339,6 +349,7 @@ pub fn load_settings_document(path: &Path) -> Result<SettingsLoadResult> {
     Ok(SettingsLoadResult {
         document: SettingsDocument::from_config(&loaded.config),
         warnings: loaded.warnings,
+        image_preview: SettingsImagePreview::default(),
     })
 }
 
@@ -1995,6 +2006,8 @@ shader = {{
             ShaderDesktopScope::Primary
         );
         assert_eq!(loaded.document.shader.color_space, ShaderColorSpace::Srgb);
+        assert_eq!(loaded.image_preview.current_src, None);
+        assert_eq!(loaded.image_preview.next_src, None);
     }
 
     #[test]

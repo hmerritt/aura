@@ -22,14 +22,15 @@ mod wallpaper;
 
 use crate::cache::CacheManager;
 use crate::config::{
-    load_from_path_with_warnings, ConfigWarning, RendererMode, SettingsDocument, ShaderConfig,
+    load_from_path_with_warnings, ConfigWarning, RendererMode, SettingsDocument,
+    SettingsImagePreview, SettingsLoadResult, ShaderConfig,
 };
 use crate::errors::Result;
 use crate::installer::{SquirrelEvent, StartupRegistrationStatus};
 use crate::renderer::{RendererEvent, ShaderRenderer};
 use crate::rotation::RotationManager;
 use crate::scheduler::{Scheduler, SchedulerEvent};
-use crate::settings_ui::{SettingsUiController, SettingsUiEvent};
+use crate::settings_ui::{PreviewAsset, SettingsUiController, SettingsUiEvent};
 use crate::sources::{build_sources, ImageCandidate, ImageSource, Origin, SourceKind};
 use crate::state::{PersistedState, StateStore};
 use crate::tray::{format_config_duration, SessionStats, TrayEvent};
@@ -43,7 +44,7 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, UNIX_EPOCH};
 use tracing::{info, warn};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -293,6 +294,7 @@ async fn run(args: Vec<String>, debug_requested: bool) -> Result<()> {
             persist_state(&state_store, &rotation, last_image_id.clone())?;
         }
     }
+    sync_settings_ui_preview_assets(&mut rotation, last_image_id.as_deref());
 
     let mut scheduler = Scheduler::new(config.image.timer, config.image.remote_update_timer);
     if updater_runtime.status() == UpdaterStatus::Idle {
@@ -412,6 +414,7 @@ async fn run(args: Vec<String>, debug_requested: bool) -> Result<()> {
                                 Ok(None) => warn!("shader fallback requested image mode but no image was available"),
                                 Err(error) => warn!(error = %error, "failed to apply image mode fallback"),
                             }
+                            sync_settings_ui_preview_assets(&mut rotation, last_image_id.as_deref());
                         }
                     }
                 }
@@ -513,6 +516,7 @@ async fn run(args: Vec<String>, debug_requested: bool) -> Result<()> {
                             Ok(None) => warn!("tray requested switch but no image available"),
                             Err(error) => warn!(error = %error, "tray-requested wallpaper switch failed"),
                         }
+                        sync_settings_ui_preview_assets(&mut rotation, last_image_id.as_deref());
                         if restart_pending_on_next_switch
                             && restart_after_update(
                                 updater_restart_context.as_ref(),
@@ -645,6 +649,7 @@ async fn run(args: Vec<String>, debug_requested: bool) -> Result<()> {
                                 warn!(error = %error, "failed to switch wallpaper");
                             }
                         }
+                        sync_settings_ui_preview_assets(&mut rotation, last_image_id.as_deref());
                         if restart_pending_on_next_switch
                             && restart_after_update(
                                 updater_restart_context.as_ref(),
@@ -669,6 +674,7 @@ async fn run(args: Vec<String>, debug_requested: bool) -> Result<()> {
                                     .set_total_images(local_images_count + remote_images_count);
                                 rotation.rebuild_pool(updated);
                                 info!(pool_size = rotation.pool_size(), "full refresh complete");
+                                sync_settings_ui_preview_assets(&mut rotation, last_image_id.as_deref());
                             }
                             Err(error) => warn!(error = %error, "source refresh failed"),
                         }
@@ -753,7 +759,7 @@ async fn handle_settings_ui_message(
             Ok(false)
         }
         "load_settings" => {
-            match config::load_settings_document(config_path) {
+            match build_settings_load_result(config_path, rotation, last_image_id.as_deref()) {
                 Ok(result) => send_settings_ui_response(
                     settings_ui_controller.as_ref(),
                     SettingsUiResponseEnvelope {
@@ -859,7 +865,11 @@ async fn handle_settings_ui_message(
                     )
                     .await?;
 
-                    match config::load_settings_document(config_path) {
+                    match build_settings_load_result(
+                        config_path,
+                        rotation,
+                        last_image_id.as_deref(),
+                    ) {
                         Ok(result) => send_settings_ui_response(
                             settings_ui_controller.as_ref(),
                             SettingsUiResponseEnvelope {
@@ -1176,6 +1186,7 @@ async fn reload_runtime_from_disk(
             Err(error) => warn!(error = %error, "failed to apply wallpaper after settings reload"),
         }
     }
+    sync_settings_ui_preview_assets(rotation, last_image_id.as_deref());
 
     let restart_requested = restart_pending_on_next_switch
         && *active_mode == ActiveMode::Shader
@@ -1327,6 +1338,108 @@ fn restart_after_update(
 
     info!("relaunch command succeeded; exiting current process for update handoff");
     true
+}
+
+#[derive(Debug)]
+struct SettingsUiPreviewState {
+    image_preview: SettingsImagePreview,
+    current_asset: Option<PreviewAsset>,
+    next_asset: Option<PreviewAsset>,
+}
+
+fn build_settings_load_result(
+    config_path: &Path,
+    rotation: &mut RotationManager,
+    last_image_id: Option<&str>,
+) -> Result<SettingsLoadResult> {
+    let mut result = config::load_settings_document(config_path)?;
+    let preview_state = build_settings_ui_preview_state(rotation, last_image_id);
+    crate::settings_ui::set_preview_assets(
+        preview_state.current_asset,
+        preview_state.next_asset,
+    );
+    result.image_preview = preview_state.image_preview;
+    Ok(result)
+}
+
+fn sync_settings_ui_preview_assets(rotation: &mut RotationManager, last_image_id: Option<&str>) {
+    let preview_state = build_settings_ui_preview_state(rotation, last_image_id);
+    crate::settings_ui::set_preview_assets(
+        preview_state.current_asset,
+        preview_state.next_asset,
+    );
+}
+
+fn build_settings_ui_preview_state(
+    rotation: &mut RotationManager,
+    last_image_id: Option<&str>,
+) -> SettingsUiPreviewState {
+    let current_candidate = last_image_id.and_then(|id| {
+        rotation
+            .candidates()
+            .into_iter()
+            .find(|candidate| candidate.id == id)
+    });
+    let next_candidate = rotation.peek_next();
+
+    let current_asset = build_preview_asset(current_candidate.as_ref());
+    let next_asset = build_preview_asset(next_candidate.as_ref());
+
+    SettingsUiPreviewState {
+        image_preview: SettingsImagePreview {
+            current_src: current_asset
+                .as_ref()
+                .map(|asset| build_preview_src("current", asset)),
+            next_src: next_asset
+                .as_ref()
+                .map(|asset| build_preview_src("next", asset)),
+        },
+        current_asset,
+        next_asset,
+    }
+}
+
+fn build_preview_asset(candidate: Option<&ImageCandidate>) -> Option<PreviewAsset> {
+    let candidate = candidate?;
+    match candidate.local_preview_path() {
+        Ok(Some(path)) if path.is_file() => {
+            let mime_type = preview_mime_type(&path)?;
+            Some(PreviewAsset {
+                revision: preview_revision(candidate),
+                path,
+                mime_type: mime_type.to_string(),
+            })
+        }
+        Ok(Some(_)) | Ok(None) => None,
+        Err(error) => {
+            warn!(error = %error, id = %candidate.id, "failed to resolve preview asset");
+            None
+        }
+    }
+}
+
+fn build_preview_src(slot: &str, asset: &PreviewAsset) -> String {
+    format!("/preview/{slot}?rev={}", asset.revision)
+}
+
+fn preview_revision(candidate: &ImageCandidate) -> String {
+    let mtime = candidate
+        .mtime
+        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0);
+    format!("{}-{mtime}", candidate.id)
+}
+
+fn preview_mime_type(path: &Path) -> Option<&'static str> {
+    match path.extension()?.to_str()?.to_ascii_lowercase().as_str() {
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "png" => Some("image/png"),
+        "gif" => Some("image/gif"),
+        "bmp" => Some("image/bmp"),
+        "webp" => Some("image/webp"),
+        _ => None,
+    }
 }
 
 fn print_version_banner() {
@@ -1510,12 +1623,19 @@ fn prefetch_next_candidate(rotation: &mut RotationManager) {
 
     tokio::spawn(async move {
         let source_input = next_candidate.display_source();
-        if let Err(error) = next_candidate.prefetch().await {
-            warn!(
-                input = %source_input,
-                error = %error,
-                "failed to prefetch RSS image"
-            );
+        match next_candidate.prefetch().await {
+            Ok(()) => {
+                if let Some(asset) = build_preview_asset(Some(&next_candidate)) {
+                    crate::settings_ui::set_next_preview_asset_if_revision(asset);
+                }
+            }
+            Err(error) => {
+                warn!(
+                    input = %source_input,
+                    error = %error,
+                    "failed to prefetch RSS image"
+                );
+            }
         }
     });
 }
@@ -1978,6 +2098,94 @@ mod tests {
         assert_eq!(server.hits("/good.png"), 1);
     }
 
+    #[test]
+    fn build_settings_ui_preview_state_uses_current_and_next_candidates() {
+        let tmp = tempdir().unwrap();
+        let current_path = tmp.path().join("current.png");
+        let next_path = tmp.path().join("next.png");
+        fs::write(&current_path, tiny_png_bytes_with_color([10, 20, 30, 255])).unwrap();
+        fs::write(&next_path, tiny_png_bytes_with_color([200, 120, 40, 255])).unwrap();
+
+        let current =
+            ImageCandidate::local("current".to_string(), Origin::Directory, current_path, None);
+        let next = ImageCandidate::local("next".to_string(), Origin::Directory, next_path, None);
+
+        let mut rotation = RotationManager::new();
+        rotation.rebuild_pool(vec![current, next]);
+        rotation.restore_state(&PersistedState {
+            remaining_queue: vec!["next".to_string()],
+            shown_ids: vec!["current".to_string()],
+            last_image_id: None,
+        });
+
+        let preview_state = build_settings_ui_preview_state(&mut rotation, Some("current"));
+
+        assert_eq!(
+            preview_state.image_preview.current_src,
+            Some("/preview/current?rev=current-0".to_string())
+        );
+        assert_eq!(
+            preview_state.image_preview.next_src,
+            Some("/preview/next?rev=next-0".to_string())
+        );
+    }
+
+    #[test]
+    fn build_settings_ui_preview_state_leaves_current_empty_without_last_image() {
+        let tmp = tempdir().unwrap();
+        let next_path = tmp.path().join("next.png");
+        fs::write(&next_path, tiny_png_bytes()).unwrap();
+
+        let next = ImageCandidate::local("next".to_string(), Origin::Directory, next_path, None);
+
+        let mut rotation = RotationManager::new();
+        rotation.rebuild_pool(vec![next]);
+        rotation.restore_state(&PersistedState {
+            remaining_queue: vec!["next".to_string()],
+            shown_ids: Vec::new(),
+            last_image_id: None,
+        });
+
+        let preview_state = build_settings_ui_preview_state(&mut rotation, None);
+
+        assert_eq!(preview_state.image_preview.current_src, None);
+        assert_eq!(
+            preview_state.image_preview.next_src,
+            Some("/preview/next?rev=next-0".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn build_settings_ui_preview_state_skips_uncached_rss_candidates() {
+        let server = TestServer::start();
+        server.set_response(
+            "/preview.png",
+            ResponseSpec::ok("image/png", tiny_png_bytes()),
+        );
+
+        let tmp = tempdir().unwrap();
+        let candidate = ImageCandidate::rss(
+            "preview".to_string(),
+            server.url("/preview.png"),
+            tmp.path().join("rss"),
+            None,
+        );
+
+        let mut rotation = RotationManager::new();
+        rotation.rebuild_pool(vec![candidate]);
+        rotation.restore_state(&PersistedState {
+            remaining_queue: vec!["preview".to_string()],
+            shown_ids: Vec::new(),
+            last_image_id: None,
+        });
+
+        let preview_state = build_settings_ui_preview_state(&mut rotation, None);
+
+        assert_eq!(preview_state.image_preview.current_src, None);
+        assert_eq!(preview_state.image_preview.next_src, None);
+        assert_eq!(server.hits("/preview.png"), 0);
+    }
+
     #[derive(Default)]
     struct RecordingBackend {
         calls: Mutex<Vec<PathBuf>>,
@@ -2033,8 +2241,11 @@ mod tests {
     }
 
     fn tiny_png_bytes() -> Vec<u8> {
-        let image: ImageBuffer<Rgba<u8>, Vec<u8>> =
-            ImageBuffer::from_pixel(1, 1, Rgba([10, 20, 30, 255]));
+        tiny_png_bytes_with_color([10, 20, 30, 255])
+    }
+
+    fn tiny_png_bytes_with_color(color: [u8; 4]) -> Vec<u8> {
+        let image: ImageBuffer<Rgba<u8>, Vec<u8>> = ImageBuffer::from_pixel(1, 1, Rgba(color));
         let mut out = Cursor::new(Vec::new());
         DynamicImage::ImageRgba8(image)
             .write_to(&mut out, ImageFormat::Png)
