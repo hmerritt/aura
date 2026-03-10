@@ -84,6 +84,16 @@ impl ImageCandidate {
         }
     }
 
+    pub fn local_preview_path(&self) -> Result<Option<PathBuf>> {
+        match &self.location {
+            ImageLocation::Local(path) => Ok(Some(path.clone())),
+            ImageLocation::Rss {
+                image_url,
+                download_dir,
+            } => rss::find_cached_image_path(download_dir, image_url),
+        }
+    }
+
     pub fn is_prefetchable(&self) -> bool {
         matches!(self.location, ImageLocation::Rss { .. })
     }

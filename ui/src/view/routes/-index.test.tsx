@@ -5,7 +5,7 @@ import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { describe, expect, test, beforeEach, vi } from "vitest";
 
 import { env } from "lib/global/env";
-import type { SettingsDocument } from "lib/host/types";
+import type { SettingsDocument, SettingsLoadResult } from "lib/host/types";
 import { renderBasic } from "tests/render";
 
 const { loadSettingsMock } = vi.hoisted(() => ({
@@ -26,6 +26,8 @@ const cargoVersion =
 	cargoManifest.match(/^\[package\]([\s\S]*?)(?:^\[[^\]]+\]|\Z)/m)?.[1]?.match(
 		/^\s*version\s*=\s*"([^"]+)"\s*$/m
 	)?.[1] ?? "unknown";
+const CURRENT_IMAGE_PREVIEW_SRC = "/preview/current?rev=current";
+const NEXT_IMAGE_PREVIEW_SRC = "/preview/next?rev=next";
 
 const createSettingsDocument = (renderer: SettingsDocument["renderer"]): SettingsDocument => ({
 	renderer,
@@ -63,12 +65,20 @@ const createSettingsDocument = (renderer: SettingsDocument["renderer"]): Setting
 	max_cache_age_days: 30
 });
 
+const createSettingsLoadResult = (
+	renderer: SettingsDocument["renderer"]
+): SettingsLoadResult => ({
+	document: createSettingsDocument(renderer),
+	warnings: [],
+	imagePreview: {
+		currentSrc: CURRENT_IMAGE_PREVIEW_SRC,
+		nextSrc: NEXT_IMAGE_PREVIEW_SRC
+	}
+});
+
 beforeEach(() => {
 	loadSettingsMock.mockReset();
-	loadSettingsMock.mockResolvedValue({
-		document: createSettingsDocument("image"),
-		warnings: []
-	});
+	loadSettingsMock.mockResolvedValue(createSettingsLoadResult("image"));
 });
 
 describe("settings header", () => {
@@ -106,24 +116,28 @@ describe("settings header", () => {
 		await waitFor(() => expect(imageRadio).toBeChecked());
 
 		expect(shaderRadio).not.toBeChecked();
-		expect(screen.getByTestId("image-mode-preview")).toHaveAttribute("src", expect.stringContaining("data:image/svg+xml"));
+		expect(screen.getByTestId("image-mode-preview")).toHaveAttribute(
+			"src",
+			CURRENT_IMAGE_PREVIEW_SRC
+		);
 		expect(screen.getByTestId("shader-mode-preview").tagName.toLowerCase()).toBe("canvas");
 	});
 
 	test("reflects a shader document as the initial selection", async () => {
-		loadSettingsMock.mockResolvedValueOnce({
-			document: createSettingsDocument("shader"),
-			warnings: []
-		});
+		loadSettingsMock.mockResolvedValueOnce(createSettingsLoadResult("shader"));
 
 		await renderBasic(<IndexRoute />);
 
 		const shaderRadio = screen.getByRole("radio", { name: "Shader" });
 		await waitFor(() => expect(shaderRadio).toBeChecked());
 		expect(screen.getByRole("radio", { name: "Image" })).not.toBeChecked();
+		expect(screen.getByTestId("image-mode-preview")).toHaveAttribute(
+			"src",
+			NEXT_IMAGE_PREVIEW_SRC
+		);
 	});
 
-	test("updates the selected mode when shader is clicked", async () => {
+	test("updates the selected mode and preview when shader is clicked", async () => {
 		await renderBasic(<IndexRoute />);
 
 		const imageRadio = screen.getByRole("radio", { name: "Image" });
@@ -134,13 +148,14 @@ describe("settings header", () => {
 
 		expect(shaderRadio).toBeChecked();
 		expect(imageRadio).not.toBeChecked();
+		expect(screen.getByTestId("image-mode-preview")).toHaveAttribute(
+			"src",
+			NEXT_IMAGE_PREVIEW_SRC
+		);
 	});
 
-	test("updates the selected mode when image is clicked", async () => {
-		loadSettingsMock.mockResolvedValueOnce({
-			document: createSettingsDocument("shader"),
-			warnings: []
-		});
+	test("updates the selected mode and preview when image is clicked", async () => {
+		loadSettingsMock.mockResolvedValueOnce(createSettingsLoadResult("shader"));
 
 		await renderBasic(<IndexRoute />);
 
@@ -152,5 +167,26 @@ describe("settings header", () => {
 
 		expect(imageRadio).toBeChecked();
 		expect(shaderRadio).not.toBeChecked();
+		expect(screen.getByTestId("image-mode-preview")).toHaveAttribute(
+			"src",
+			CURRENT_IMAGE_PREVIEW_SRC
+		);
+	});
+
+	test("renders no image preview when real previews are unavailable", async () => {
+		loadSettingsMock.mockResolvedValueOnce({
+			...createSettingsLoadResult("image"),
+			imagePreview: {
+				currentSrc: null,
+				nextSrc: null
+			}
+		});
+
+		await renderBasic(<IndexRoute />);
+
+		await waitFor(() =>
+			expect(screen.getByRole("radio", { name: "Image" })).toBeChecked()
+		);
+		expect(screen.queryByTestId("image-mode-preview")).not.toBeInTheDocument();
 	});
 });
