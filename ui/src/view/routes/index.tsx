@@ -66,9 +66,9 @@ export function IndexRoute() {
 				setLockedImageSelection(
 					result.document.renderer === "image"
 						? toLockedImageSelection(
-								result.imagePreview.currentId,
-								result.imagePreview.currentSrc
-							)
+							result.imagePreview.currentId,
+							result.imagePreview.currentSrc
+						)
 						: null
 				);
 				setHasLoadError(false);
@@ -104,21 +104,21 @@ export function IndexRoute() {
 			const intendedSelection =
 				settings.document.renderer === "image"
 					? toLockedImageSelection(
-							settings.imagePreview.currentId,
-							settings.imagePreview.currentSrc
-						) ??
-						toLockedImageSelection(
-							settings.imagePreview.nextId,
-							settings.imagePreview.nextSrc
-						)
+						settings.imagePreview.currentId,
+						settings.imagePreview.currentSrc
+					) ??
+					toLockedImageSelection(
+						settings.imagePreview.nextId,
+						settings.imagePreview.nextSrc
+					)
 					: toLockedImageSelection(
-							settings.imagePreview.nextId,
-							settings.imagePreview.nextSrc
-						) ??
-						toLockedImageSelection(
-							settings.imagePreview.currentId,
-							settings.imagePreview.currentSrc
-						);
+						settings.imagePreview.nextId,
+						settings.imagePreview.nextSrc
+					) ??
+					toLockedImageSelection(
+						settings.imagePreview.currentId,
+						settings.imagePreview.currentSrc
+					);
 			if (intendedSelection) {
 				setLockedImageSelection(intendedSelection);
 			}
@@ -176,7 +176,6 @@ export function IndexRoute() {
 							{...stylex.props(styles.optionGrid)}
 						>
 							<ModeOption
-								description="Still wallpaper preview"
 								isSelected={selectedRenderer === "image"}
 								label="Image"
 								mode="image"
@@ -186,6 +185,7 @@ export function IndexRoute() {
 									imageModePreviewSrc ? (
 										<img
 											alt=""
+											draggable={false}
 											aria-hidden="true"
 											data-testid="image-mode-preview"
 											src={imageModePreviewSrc}
@@ -197,7 +197,6 @@ export function IndexRoute() {
 							/>
 
 							<ModeOption
-								description="Live shader viewport"
 								isSelected={selectedRenderer === "shader"}
 								label="Shader"
 								mode="shader"
@@ -222,7 +221,7 @@ export function IndexRoute() {
 }
 
 type ModeOptionProps = {
-	description: string;
+	description?: string;
 	disabled: boolean;
 	isSelected: boolean;
 	label: string;
@@ -266,14 +265,13 @@ function ModeOption({
 
 			<span
 				{...stylex.props(
-					styles.optionCard,
-					isSelected && styles.optionCardSelected
+					styles.optionCard
 				)}
 			>
 				<span
 					data-testid={`${mode}-mode-preview-frame`}
 					style={{ aspectRatio: `${previewFrame.width} / ${previewFrame.height}` }}
-					{...stylex.props(styles.previewFrame)}
+					{...stylex.props(styles.previewFrame, isSelected && styles.optionCardSelected)}
 				>
 					{preview}
 				</span>
@@ -286,7 +284,7 @@ function ModeOption({
 					>
 						{label}
 					</span>
-					<span {...stylex.props(styles.optionDescription)}>{description}</span>
+					{description && <span {...stylex.props(styles.optionDescription)}>{description}</span>}
 				</span>
 			</span>
 		</label>
@@ -302,10 +300,8 @@ const styles = stylex.create({
 	header: {
 		width: "100%",
 		height: "55px",
-		paddingTop: "15px",
-		paddingRight: "24px",
-		paddingBottom: "15px",
-		paddingLeft: "24px",
+		paddingRight: "20px",
+		paddingLeft: "20px",
 		display: "flex",
 		alignItems: "center",
 		justifyContent: "space-between",
@@ -333,9 +329,9 @@ const styles = stylex.create({
 		textTransform: "lowercase"
 	},
 	version: {
-		fontSize: "1.3rem",
+		fontSize: "1.2rem",
 		lineHeight: 1,
-		fontWeight: 500,
+		fontWeight: 330,
 		color: "#666666"
 	},
 	content: {
@@ -355,9 +351,9 @@ const styles = stylex.create({
 		gap: "6px"
 	},
 	sectionTitle: {
-		fontSize: "1.6rem",
+		fontSize: "1.4rem",
 		lineHeight: 1,
-		fontWeight: 600,
+		fontWeight: 450,
 		color: "#111111"
 	},
 	sectionMeta: {
@@ -404,38 +400,26 @@ const styles = stylex.create({
 		display: "flex",
 		flexDirection: "column",
 		gap: "14px",
-		paddingTop: "14px",
-		paddingRight: "14px",
-		paddingBottom: "16px",
-		paddingLeft: "14px",
-		borderWidth: "1px",
-		borderStyle: "solid",
-		borderColor: "#D7DCE4",
-		borderRadius: "20px",
-		backgroundColor: "#F7F8FA",
-		transition:
-			"transform 160ms ease, border-color 160ms ease, background-color 160ms ease, box-shadow 160ms ease",
-		boxShadow: "0 10px 24px rgba(20, 33, 61, 0.04)",
-		":hover": {
-			transform: "translateY(-1px)",
-			backgroundColor: "#FBFCFD",
-			boxShadow: "0 14px 28px rgba(20, 33, 61, 0.07)"
-		}
 	},
 	optionCardSelected: {
-		borderColor: "#2D6BFF",
-		backgroundColor: "#F4F8FF",
-		boxShadow: "0 0 0 2px rgba(45, 107, 255, 0.12), 0 16px 30px rgba(29, 64, 128, 0.10)"
+		borderColor: "#00B7EC"
 	},
 	previewFrame: {
 		display: "block",
 		width: "100%",
 		overflow: "hidden",
-		borderRadius: "14px",
 		backgroundColor: "#E5EAF2",
 		borderWidth: "1px",
 		borderStyle: "solid",
-		borderColor: "rgba(88, 104, 134, 0.14)"
+		borderColor: "rgba(0, 0, 0, 0.12)",
+		borderRadius: "20px",
+		boxShadow: "0 2px 10px rgba(0, 0, 0, 0.08)",
+		transition:
+			"transform 160ms ease, border-color 160ms ease, background-color 160ms ease, box-shadow 160ms ease",
+		":hover": {
+			transform: "translateY(-1px)",
+			boxShadow: "0 4px 40px rgba(0, 0, 0, 0.25)"
+		}
 	},
 	media: {
 		display: "block",
@@ -451,7 +435,7 @@ const styles = stylex.create({
 	optionTitle: {
 		fontSize: "1.7rem",
 		lineHeight: 1,
-		fontWeight: 600,
+		fontWeight: 500,
 		color: "#20242D"
 	},
 	optionTitleSelected: {

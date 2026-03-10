@@ -103,10 +103,8 @@ describe("settings header", () => {
 		expect(logo).toHaveAttribute("alt", "aura logo");
 		expect(header).toHaveStyle("height: 55px");
 		expect(header).toHaveStyle("width: 100%");
-		expect(header).toHaveStyle("padding-top: 15px");
-		expect(header).toHaveStyle("padding-bottom: 15px");
-		expect(header).toHaveStyle("padding-left: 24px");
-		expect(header).toHaveStyle("padding-right: 24px");
+		expect(header).toHaveStyle("padding-left: 20px");
+		expect(header).toHaveStyle("padding-right: 20px");
 		expect(header).toHaveStyle("background-color: rgb(242, 242, 242)");
 		expect(header).toHaveStyle("border-bottom-width: 1px");
 		expect(header).toHaveStyle("border-bottom-style: solid");
@@ -130,8 +128,17 @@ describe("settings header", () => {
 		expect(screen.getByTestId("image-mode-preview-frame")).toHaveStyle(
 			"aspect-ratio: 18 / 9"
 		);
+		expect(screen.getByTestId("image-mode-preview-frame")).toHaveStyle(
+			"border-color: rgb(0, 183, 236)"
+		);
+		expect(screen.getByTestId("image-mode-preview-frame")).toHaveStyle(
+			"box-shadow: 0 2px 10px rgba(0,0,0,.08)"
+		);
 		expect(screen.getByTestId("shader-mode-preview-frame")).toHaveStyle(
 			"aspect-ratio: 18 / 9"
+		);
+		expect(screen.getByTestId("shader-mode-preview-frame")).toHaveStyle(
+			"border-color: rgba(0, 0, 0, 0.12)"
 		);
 		expect(screen.getByTestId("shader-mode-preview").tagName.toLowerCase()).toBe("canvas");
 	});
