@@ -23,7 +23,7 @@ mod wallpaper;
 use crate::cache::CacheManager;
 use crate::config::{
     load_from_path_with_warnings, ConfigWarning, RendererMode, SettingsDocument,
-    SettingsImagePreview, SettingsLoadResult, ShaderConfig,
+    SettingsImagePreview, SettingsLoadResult, SettingsPreviewFrame, ShaderConfig,
 };
 use crate::errors::Result;
 use crate::installer::{SquirrelEvent, StartupRegistrationStatus};
@@ -1354,20 +1354,15 @@ fn build_settings_load_result(
 ) -> Result<SettingsLoadResult> {
     let mut result = config::load_settings_document(config_path)?;
     let preview_state = build_settings_ui_preview_state(rotation, last_image_id);
-    crate::settings_ui::set_preview_assets(
-        preview_state.current_asset,
-        preview_state.next_asset,
-    );
+    crate::settings_ui::set_preview_assets(preview_state.current_asset, preview_state.next_asset);
     result.image_preview = preview_state.image_preview;
+    result.preview_frame = settings_preview_frame();
     Ok(result)
 }
 
 fn sync_settings_ui_preview_assets(rotation: &mut RotationManager, last_image_id: Option<&str>) {
     let preview_state = build_settings_ui_preview_state(rotation, last_image_id);
-    crate::settings_ui::set_preview_assets(
-        preview_state.current_asset,
-        preview_state.next_asset,
-    );
+    crate::settings_ui::set_preview_assets(preview_state.current_asset, preview_state.next_asset);
 }
 
 fn build_settings_ui_preview_state(
@@ -1439,6 +1434,42 @@ fn preview_mime_type(path: &Path) -> Option<&'static str> {
         "bmp" => Some("image/bmp"),
         "webp" => Some("image/webp"),
         _ => None,
+    }
+}
+
+fn settings_preview_frame() -> SettingsPreviewFrame {
+    preview_frame_from_dimensions(primary_preview_frame_dimensions())
+}
+
+#[cfg(windows)]
+fn primary_preview_frame_dimensions() -> Option<(i32, i32)> {
+    let rect = crate::renderer::primary_desktop_rect();
+    Some((rect.width, rect.height))
+}
+
+#[cfg(not(windows))]
+fn primary_preview_frame_dimensions() -> Option<(i32, i32)> {
+    None
+}
+
+fn preview_frame_from_dimensions(dimensions: Option<(i32, i32)>) -> SettingsPreviewFrame {
+    match dimensions {
+        Some((width, height)) if width > 0 && height > 0 => SettingsPreviewFrame {
+            width: width as u32,
+            height: height as u32,
+        },
+        Some((width, height)) => {
+            warn!(
+                width,
+                height,
+                "primary desktop bounds were invalid; falling back to default preview frame"
+            );
+            SettingsPreviewFrame::default()
+        }
+        None => {
+            warn!("primary desktop bounds unavailable; falling back to default preview frame");
+            SettingsPreviewFrame::default()
+        }
     }
 }
 
@@ -2184,6 +2215,22 @@ mod tests {
         assert_eq!(preview_state.image_preview.current_src, None);
         assert_eq!(preview_state.image_preview.next_src, None);
         assert_eq!(server.hits("/preview.png"), 0);
+    }
+
+    #[test]
+    fn preview_frame_from_dimensions_uses_primary_dimensions_when_valid() {
+        let frame = preview_frame_from_dimensions(Some((3600, 1800)));
+
+        assert_eq!(frame.width, 3600);
+        assert_eq!(frame.height, 1800);
+    }
+
+    #[test]
+    fn preview_frame_from_dimensions_falls_back_when_invalid() {
+        let frame = preview_frame_from_dimensions(Some((0, 1800)));
+
+        assert_eq!(frame.width, 16);
+        assert_eq!(frame.height, 9);
     }
 
     #[derive(Default)]

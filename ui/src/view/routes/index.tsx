@@ -16,13 +16,24 @@ export const Route = createFileRoute("/")({
 });
 
 const SHADER_MODE_PREVIEW = `void mainImage(out vec4 fragColor, vec2 fragCoord) {
-	vec2 uv = fragCoord / iResolution.xy;
-	vec2 p = uv * 2.0 - 1.0;
-	float glow = 0.25 / (0.2 + length(p - vec2(0.3 * sin(iTime * 0.7), 0.2 * cos(iTime * 0.5))));
-	float wave = 0.5 + 0.5 * sin((p.x * 6.0 - p.y * 4.0) + iTime * 1.6);
-	vec3 base = mix(vec3(0.05, 0.07, 0.12), vec3(0.08, 0.24, 0.52), uv.y + wave * 0.18);
-	vec3 accent = vec3(0.22, 0.68, 1.0) * glow;
-	fragColor = vec4(base + accent, 1.0);
+    float mr = min(iResolution.x, iResolution.y);
+    vec2 uv = (fragCoord * 2.0 - iResolution.xy) / mr;
+
+    float d = -iTime * 0.8;
+    float a = 0.0;
+    for (float i = 0.0; i < 8.0; ++i) {
+        a += cos(i - d - a * uv.x);
+        d += sin(uv.y * i + a);
+    }
+    d += iTime * 0.5;
+
+vec3 colorA = vec3(0.0, 0.4, 1); // Origin blue
+vec3 colorB = vec3(1.0, 1.0, 1.0); // White
+float t = cos(a) * 0.5 + 0.5;
+vec3 col = mix(colorA, colorB, t);
+
+    //col = cos(col * cos(vec3(d, a, 2.5)) * 0.8 + 0.5);
+    fragColor = vec4(col, 1);
 }`;
 
 export function IndexRoute() {
@@ -51,6 +62,7 @@ export function IndexRoute() {
 
 	const selectedRenderer = settings?.document.renderer ?? null;
 	const canSelectMode = settings !== null;
+	const previewFrame = settings?.previewFrame ?? { width: 16, height: 9 };
 	const imageModePreviewSrc =
 		selectedRenderer === "image"
 			? settings?.imagePreview.currentSrc ?? settings?.imagePreview.nextSrc ?? null
@@ -113,15 +125,16 @@ export function IndexRoute() {
 								label="Image"
 								mode="image"
 								onSelect={setRenderer}
+								previewFrame={previewFrame}
 								preview={
 									imageModePreviewSrc ? (
 										<img
-										alt=""
-										aria-hidden="true"
-										data-testid="image-mode-preview"
-										src={imageModePreviewSrc}
-										{...stylex.props(styles.media)}
-									/>
+											alt=""
+											aria-hidden="true"
+											data-testid="image-mode-preview"
+											src={imageModePreviewSrc}
+											{...stylex.props(styles.media)}
+										/>
 									) : null
 								}
 								disabled={!canSelectMode}
@@ -133,6 +146,7 @@ export function IndexRoute() {
 								label="Shader"
 								mode="shader"
 								onSelect={setRenderer}
+								previewFrame={previewFrame}
 								preview={
 									<Shader
 										aria-hidden="true"
@@ -158,6 +172,10 @@ type ModeOptionProps = {
 	label: string;
 	mode: RendererMode;
 	onSelect: (renderer: RendererMode) => void;
+	previewFrame: {
+		width: number;
+		height: number;
+	};
 	preview: React.ReactNode;
 };
 
@@ -168,6 +186,7 @@ function ModeOption({
 	label,
 	mode,
 	onSelect,
+	previewFrame,
 	preview
 }: ModeOptionProps) {
 	return (
@@ -195,7 +214,13 @@ function ModeOption({
 					isSelected && styles.optionCardSelected
 				)}
 			>
-				<span {...stylex.props(styles.previewFrame)}>{preview}</span>
+				<span
+					data-testid={`${mode}-mode-preview-frame`}
+					style={{ aspectRatio: `${previewFrame.width} / ${previewFrame.height}` }}
+					{...stylex.props(styles.previewFrame)}
+				>
+					{preview}
+				</span>
 				<span {...stylex.props(styles.optionMeta)}>
 					<span
 						{...stylex.props(
@@ -349,7 +374,6 @@ const styles = stylex.create({
 	previewFrame: {
 		display: "block",
 		width: "100%",
-		height: "190px",
 		overflow: "hidden",
 		borderRadius: "14px",
 		backgroundColor: "#E5EAF2",

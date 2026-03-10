@@ -16,6 +16,8 @@ mod precompiled;
 mod wgpu_runtime;
 
 #[cfg(windows)]
+pub use desktop_windows::primary_desktop_rect;
+#[cfg(windows)]
 pub use engine::ShaderRenderer;
 
 #[cfg(not(windows))]

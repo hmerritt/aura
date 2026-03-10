@@ -64,6 +64,10 @@ export interface SettingsLoadResult {
     currentSrc: string | null;
     nextSrc: string | null;
   };
+  previewFrame: {
+    width: number;
+    height: number;
+  };
 }
 
 export interface SettingsValidationResult {

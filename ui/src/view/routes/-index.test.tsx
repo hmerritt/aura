@@ -28,6 +28,10 @@ const cargoVersion =
 	)?.[1] ?? "unknown";
 const CURRENT_IMAGE_PREVIEW_SRC = "/preview/current?rev=current";
 const NEXT_IMAGE_PREVIEW_SRC = "/preview/next?rev=next";
+const PREVIEW_FRAME = {
+	width: 18,
+	height: 9
+};
 
 const createSettingsDocument = (renderer: SettingsDocument["renderer"]): SettingsDocument => ({
 	renderer,
@@ -73,7 +77,8 @@ const createSettingsLoadResult = (
 	imagePreview: {
 		currentSrc: CURRENT_IMAGE_PREVIEW_SRC,
 		nextSrc: NEXT_IMAGE_PREVIEW_SRC
-	}
+	},
+	previewFrame: PREVIEW_FRAME
 });
 
 beforeEach(() => {
@@ -119,6 +124,12 @@ describe("settings header", () => {
 		expect(screen.getByTestId("image-mode-preview")).toHaveAttribute(
 			"src",
 			CURRENT_IMAGE_PREVIEW_SRC
+		);
+		expect(screen.getByTestId("image-mode-preview-frame")).toHaveStyle(
+			"aspect-ratio: 18 / 9"
+		);
+		expect(screen.getByTestId("shader-mode-preview-frame")).toHaveStyle(
+			"aspect-ratio: 18 / 9"
 		);
 		expect(screen.getByTestId("shader-mode-preview").tagName.toLowerCase()).toBe("canvas");
 	});
@@ -188,5 +199,8 @@ describe("settings header", () => {
 			expect(screen.getByRole("radio", { name: "Image" })).toBeChecked()
 		);
 		expect(screen.queryByTestId("image-mode-preview")).not.toBeInTheDocument();
+		expect(screen.getByTestId("image-mode-preview-frame")).toHaveStyle(
+			"aspect-ratio: 18 / 9"
+		);
 	});
 });

@@ -125,6 +125,10 @@ function createMockBridge(): AuraHostBridge {
                 currentSrc: null,
                 nextSrc: null,
               },
+              previewFrame: {
+                width: 1920,
+                height: 1080,
+              },
             } satisfies SettingsLoadResult,
           });
           break;
@@ -151,6 +155,10 @@ function createMockBridge(): AuraHostBridge {
                 imagePreview: {
                   currentSrc: null,
                   nextSrc: null,
+                },
+                previewFrame: {
+                  width: 1920,
+                  height: 1080,
                 },
               },
               restartRequested: false,

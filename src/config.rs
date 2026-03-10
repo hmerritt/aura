@@ -227,6 +227,8 @@ pub struct SettingsLoadResult {
     pub warnings: Vec<ConfigWarning>,
     #[serde(rename = "imagePreview")]
     pub image_preview: SettingsImagePreview,
+    #[serde(rename = "previewFrame")]
+    pub preview_frame: SettingsPreviewFrame,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -240,6 +242,21 @@ pub struct SettingsImagePreview {
     pub current_src: Option<String>,
     #[serde(rename = "nextSrc")]
     pub next_src: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SettingsPreviewFrame {
+    pub width: u32,
+    pub height: u32,
+}
+
+impl Default for SettingsPreviewFrame {
+    fn default() -> Self {
+        Self {
+            width: 16,
+            height: 9,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -350,6 +367,7 @@ pub fn load_settings_document(path: &Path) -> Result<SettingsLoadResult> {
         document: SettingsDocument::from_config(&loaded.config),
         warnings: loaded.warnings,
         image_preview: SettingsImagePreview::default(),
+        preview_frame: SettingsPreviewFrame::default(),
     })
 }
 
@@ -2008,6 +2026,8 @@ shader = {{
         assert_eq!(loaded.document.shader.color_space, ShaderColorSpace::Srgb);
         assert_eq!(loaded.image_preview.current_src, None);
         assert_eq!(loaded.image_preview.next_src, None);
+        assert_eq!(loaded.preview_frame.width, 16);
+        assert_eq!(loaded.preview_frame.height, 9);
     }
 
     #[test]
