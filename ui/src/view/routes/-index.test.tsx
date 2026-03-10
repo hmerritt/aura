@@ -75,7 +75,9 @@ const createSettingsLoadResult = (
 	document: createSettingsDocument(renderer),
 	warnings: [],
 	imagePreview: {
+		currentId: "current",
 		currentSrc: CURRENT_IMAGE_PREVIEW_SRC,
+		nextId: "next",
 		nextSrc: NEXT_IMAGE_PREVIEW_SRC
 	},
 	previewFrame: PREVIEW_FRAME
@@ -148,7 +150,7 @@ describe("settings header", () => {
 		);
 	});
 
-	test("updates the selected mode and preview when shader is clicked", async () => {
+	test("keeps the current image preview locked when shader is clicked", async () => {
 		await renderBasic(<IndexRoute />);
 
 		const imageRadio = screen.getByRole("radio", { name: "Image" });
@@ -161,11 +163,11 @@ describe("settings header", () => {
 		expect(imageRadio).not.toBeChecked();
 		expect(screen.getByTestId("image-mode-preview")).toHaveAttribute(
 			"src",
-			NEXT_IMAGE_PREVIEW_SRC
+			CURRENT_IMAGE_PREVIEW_SRC
 		);
 	});
 
-	test("updates the selected mode and preview when image is clicked", async () => {
+	test("locks the next preview when image is clicked from shader mode", async () => {
 		loadSettingsMock.mockResolvedValueOnce(createSettingsLoadResult("shader"));
 
 		await renderBasic(<IndexRoute />);
@@ -180,7 +182,12 @@ describe("settings header", () => {
 		expect(shaderRadio).not.toBeChecked();
 		expect(screen.getByTestId("image-mode-preview")).toHaveAttribute(
 			"src",
-			CURRENT_IMAGE_PREVIEW_SRC
+			NEXT_IMAGE_PREVIEW_SRC
+		);
+		fireEvent.click(shaderRadio);
+		expect(screen.getByTestId("image-mode-preview")).toHaveAttribute(
+			"src",
+			NEXT_IMAGE_PREVIEW_SRC
 		);
 	});
 
@@ -188,7 +195,9 @@ describe("settings header", () => {
 		loadSettingsMock.mockResolvedValueOnce({
 			...createSettingsLoadResult("image"),
 			imagePreview: {
+				currentId: null,
 				currentSrc: null,
+				nextId: null,
 				nextSrc: null
 			}
 		});
@@ -201,6 +210,36 @@ describe("settings header", () => {
 		expect(screen.queryByTestId("image-mode-preview")).not.toBeInTheDocument();
 		expect(screen.getByTestId("image-mode-preview-frame")).toHaveStyle(
 			"aspect-ratio: 18 / 9"
+		);
+	});
+
+	test("does not create a lock when shader mode has no real image preview", async () => {
+		loadSettingsMock.mockResolvedValueOnce({
+			...createSettingsLoadResult("shader"),
+			imagePreview: {
+				currentId: "current",
+				currentSrc: CURRENT_IMAGE_PREVIEW_SRC,
+				nextId: null,
+				nextSrc: null
+			}
+		});
+
+		await renderBasic(<IndexRoute />);
+
+		const imageRadio = screen.getByRole("radio", { name: "Image" });
+		const shaderRadio = screen.getByRole("radio", { name: "Shader" });
+
+		await waitFor(() => expect(shaderRadio).toBeChecked());
+		expect(screen.getByTestId("image-mode-preview")).toHaveAttribute(
+			"src",
+			CURRENT_IMAGE_PREVIEW_SRC
+		);
+
+		fireEvent.click(imageRadio);
+
+		expect(screen.getByTestId("image-mode-preview")).toHaveAttribute(
+			"src",
+			CURRENT_IMAGE_PREVIEW_SRC
 		);
 	});
 });

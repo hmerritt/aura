@@ -6,6 +6,7 @@ import type {
   HostResponseEnvelope,
   HostResponseMap,
   SaveSettingsPayload,
+  SaveSettingsRequest,
   SettingsDocument,
   SettingsLoadResult,
   SettingsValidationResult,
@@ -122,7 +123,9 @@ function createMockBridge(): AuraHostBridge {
               document: state.document,
               warnings: [],
               imagePreview: {
+                currentId: "mock-current",
                 currentSrc: null,
+                nextId: "mock-next",
                 nextSrc: null,
               },
               previewFrame: {
@@ -143,7 +146,7 @@ function createMockBridge(): AuraHostBridge {
           });
           break;
         case "save_settings":
-          state.document = payload as SettingsDocument;
+          state.document = (payload as SaveSettingsRequest).document;
           emit({
             id,
             ok: true,
@@ -153,7 +156,9 @@ function createMockBridge(): AuraHostBridge {
                 document: state.document,
                 warnings: [],
                 imagePreview: {
+                  currentId: "mock-current",
                   currentSrc: null,
+                  nextId: "mock-next",
                   nextSrc: null,
                 },
                 previewFrame: {

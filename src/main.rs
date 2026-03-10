@@ -35,7 +35,7 @@ use crate::sources::{build_sources, ImageCandidate, ImageSource, Origin, SourceK
 use crate::state::{PersistedState, StateStore};
 use crate::tray::{format_config_duration, SessionStats, TrayEvent};
 use crate::updater::{RestartContext, UpdateTrigger, UpdaterEvent, UpdaterStatus};
-use anyhow::Context;
+use anyhow::{bail, Context};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashSet;
@@ -77,6 +77,32 @@ struct SettingsUiRequestEnvelope {
     command: String,
     #[serde(default)]
     payload: Value,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum SaveSettingsRequestPayload {
+    Wrapped(SaveSettingsRequest),
+    Legacy(SettingsDocument),
+}
+
+#[derive(Debug, Deserialize)]
+struct SaveSettingsRequest {
+    document: SettingsDocument,
+    #[serde(rename = "lockedImageId")]
+    locked_image_id: Option<String>,
+}
+
+impl SaveSettingsRequestPayload {
+    fn into_request(self) -> SaveSettingsRequest {
+        match self {
+            Self::Wrapped(request) => request,
+            Self::Legacy(document) => SaveSettingsRequest {
+                document,
+                locked_image_id: None,
+            },
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -554,6 +580,7 @@ async fn run(args: Vec<String>, debug_requested: bool) -> Result<()> {
                             &mut startup_update_check_deadline,
                             &mut updater_interval,
                             restart_pending_on_next_switch,
+                            None,
                             &mut last_image_id,
                             &mut _single_instance_guard,
                             &relaunch_args,
@@ -820,96 +847,123 @@ async fn handle_settings_ui_message(
             }
             Ok(false)
         }
-        "save_settings" => match serde_json::from_value::<SettingsDocument>(request.payload) {
-            Ok(document) => match config::validate_settings_document(&document, config_path) {
-                Ok(validation) if validation.warnings.is_empty() => {
-                    if let Err(error) = config::save_settings_document(config_path, &document) {
-                        send_settings_ui_response(
-                            settings_ui_controller.as_ref(),
-                            SettingsUiResponseEnvelope {
-                                id: request.id,
-                                ok: false,
-                                command: "save_settings".to_string(),
-                                payload: json!({}),
-                                error: Some(error.to_string()),
-                            },
-                        );
-                        return Ok(false);
-                    }
+        "save_settings" => {
+            match serde_json::from_value::<SaveSettingsRequestPayload>(request.payload) {
+                Ok(payload) => {
+                    let SaveSettingsRequest {
+                        document,
+                        locked_image_id,
+                    } = payload.into_request();
 
-                    let restart_requested = reload_runtime_from_disk(
-                        config_path,
-                        config,
-                        cache,
-                        sources,
-                        backend,
-                        state_store,
-                        rotation,
-                        session_stats,
-                        scheduler,
-                        renderer,
-                        renderer_event_rx,
-                        active_mode,
-                        local_images_count,
-                        remote_images_count,
-                        updater_runtime,
-                        updater_event_rx,
-                        updater_restart_context,
-                        updater_operation_in_progress,
-                        startup_update_check_deadline,
-                        updater_interval,
-                        restart_pending_on_next_switch,
-                        last_image_id,
-                        single_instance_guard,
-                        relaunch_args,
-                    )
-                    .await?;
+                    match config::validate_settings_document(&document, config_path) {
+                        Ok(validation) if validation.warnings.is_empty() => {
+                            if let Err(error) =
+                                config::save_settings_document(config_path, &document)
+                            {
+                                send_settings_ui_response(
+                                    settings_ui_controller.as_ref(),
+                                    SettingsUiResponseEnvelope {
+                                        id: request.id,
+                                        ok: false,
+                                        command: "save_settings".to_string(),
+                                        payload: json!({}),
+                                        error: Some(error.to_string()),
+                                    },
+                                );
+                                return Ok(false);
+                            }
 
-                    match build_settings_load_result(
-                        config_path,
-                        rotation,
-                        last_image_id.as_deref(),
-                    ) {
-                        Ok(result) => send_settings_ui_response(
-                            settings_ui_controller.as_ref(),
-                            SettingsUiResponseEnvelope {
-                                id: request.id,
-                                ok: true,
-                                command: "save_settings".to_string(),
-                                payload: json!({
-                                    "result": result,
-                                    "restartRequested": restart_requested,
-                                }),
-                                error: None,
-                            },
-                        ),
-                        Err(error) => send_settings_ui_response(
-                            settings_ui_controller.as_ref(),
-                            SettingsUiResponseEnvelope {
-                                id: request.id,
-                                ok: false,
-                                command: "save_settings".to_string(),
-                                payload: json!({}),
-                                error: Some(error.to_string()),
-                            },
-                        ),
+                            let restart_requested = reload_runtime_from_disk(
+                                config_path,
+                                config,
+                                cache,
+                                sources,
+                                backend,
+                                state_store,
+                                rotation,
+                                session_stats,
+                                scheduler,
+                                renderer,
+                                renderer_event_rx,
+                                active_mode,
+                                local_images_count,
+                                remote_images_count,
+                                updater_runtime,
+                                updater_event_rx,
+                                updater_restart_context,
+                                updater_operation_in_progress,
+                                startup_update_check_deadline,
+                                updater_interval,
+                                restart_pending_on_next_switch,
+                                locked_image_id.as_deref(),
+                                last_image_id,
+                                single_instance_guard,
+                                relaunch_args,
+                            )
+                            .await?;
+
+                            match build_settings_load_result(
+                                config_path,
+                                rotation,
+                                last_image_id.as_deref(),
+                            ) {
+                                Ok(result) => send_settings_ui_response(
+                                    settings_ui_controller.as_ref(),
+                                    SettingsUiResponseEnvelope {
+                                        id: request.id,
+                                        ok: true,
+                                        command: "save_settings".to_string(),
+                                        payload: json!({
+                                            "result": result,
+                                            "restartRequested": restart_requested,
+                                        }),
+                                        error: None,
+                                    },
+                                ),
+                                Err(error) => send_settings_ui_response(
+                                    settings_ui_controller.as_ref(),
+                                    SettingsUiResponseEnvelope {
+                                        id: request.id,
+                                        ok: false,
+                                        command: "save_settings".to_string(),
+                                        payload: json!({}),
+                                        error: Some(error.to_string()),
+                                    },
+                                ),
+                            }
+
+                            Ok(restart_requested)
+                        }
+                        Ok(validation) => {
+                            send_settings_ui_response(
+                                settings_ui_controller.as_ref(),
+                                SettingsUiResponseEnvelope {
+                                    id: request.id,
+                                    ok: false,
+                                    command: "save_settings".to_string(),
+                                    payload: json!(validation),
+                                    error: Some(
+                                        "settings document contains validation warnings"
+                                            .to_string(),
+                                    ),
+                                },
+                            );
+                            Ok(false)
+                        }
+                        Err(error) => {
+                            send_settings_ui_response(
+                                settings_ui_controller.as_ref(),
+                                SettingsUiResponseEnvelope {
+                                    id: request.id,
+                                    ok: false,
+                                    command: "save_settings".to_string(),
+                                    payload: json!({}),
+                                    error: Some(error.to_string()),
+                                },
+                            );
+                            Ok(false)
+                        }
                     }
-                    Ok(restart_requested)
-                }
-                Ok(validation) => {
-                    send_settings_ui_response(
-                        settings_ui_controller.as_ref(),
-                        SettingsUiResponseEnvelope {
-                            id: request.id,
-                            ok: false,
-                            command: "save_settings".to_string(),
-                            payload: json!(validation),
-                            error: Some(
-                                "settings document contains validation warnings".to_string(),
-                            ),
-                        },
-                    );
-                    Ok(false)
                 }
                 Err(error) => {
                     send_settings_ui_response(
@@ -919,26 +973,13 @@ async fn handle_settings_ui_message(
                             ok: false,
                             command: "save_settings".to_string(),
                             payload: json!({}),
-                            error: Some(error.to_string()),
+                            error: Some(format!("invalid settings document payload: {error}")),
                         },
                     );
                     Ok(false)
                 }
-            },
-            Err(error) => {
-                send_settings_ui_response(
-                    settings_ui_controller.as_ref(),
-                    SettingsUiResponseEnvelope {
-                        id: request.id,
-                        ok: false,
-                        command: "save_settings".to_string(),
-                        payload: json!({}),
-                        error: Some(format!("invalid settings document payload: {error}")),
-                    },
-                );
-                Ok(false)
             }
-        },
+        }
         "close_window" => {
             if let Some(controller) = settings_ui_controller.as_ref() {
                 controller.close_window()?;
@@ -1002,6 +1043,7 @@ async fn reload_runtime_from_disk(
     startup_update_check_deadline: &mut Option<tokio::time::Instant>,
     updater_interval: &mut Option<tokio::time::Interval>,
     restart_pending_on_next_switch: bool,
+    locked_image_id: Option<&str>,
     last_image_id: &mut Option<String>,
     single_instance_guard: &mut Option<tray::SingleInstanceGuard>,
     relaunch_args: &[String],
@@ -1177,13 +1219,48 @@ async fn reload_runtime_from_disk(
     }
 
     if *active_mode == ActiveMode::Image {
-        match try_switch_once(rotation, cache.as_ref(), backend, config).await {
-            Ok(Some(next_id)) => {
-                session_stats.inc_images_shown();
-                *last_image_id = Some(next_id);
+        if let Some(locked_image_id) = locked_image_id {
+            match try_switch_to_locked_image(
+                rotation,
+                cache.as_ref(),
+                backend,
+                config,
+                locked_image_id,
+                last_image_id.as_deref(),
+            )
+            .await
+            {
+                Ok(LockedImageSwitchOutcome::Applied { id, changed }) => {
+                    if changed {
+                        session_stats.inc_images_shown();
+                    }
+                    *last_image_id = Some(id);
+                }
+                Ok(LockedImageSwitchOutcome::Unavailable) => {
+                    warn!(
+                        locked_image_id,
+                        "locked image was unavailable during settings reload; keeping current wallpaper"
+                    );
+                }
+                Err(error) => {
+                    warn!(
+                        error = %error,
+                        locked_image_id,
+                        "failed to apply locked image during settings reload; keeping current wallpaper"
+                    );
+                }
             }
-            Ok(None) => warn!("settings reload kept image mode but no image was available"),
-            Err(error) => warn!(error = %error, "failed to apply wallpaper after settings reload"),
+        } else {
+            match try_switch_once(rotation, cache.as_ref(), backend, config).await {
+                Ok(Some(next_id)) => {
+                    session_stats.inc_images_shown();
+                    *last_image_id = Some(next_id);
+                }
+                Ok(None) => warn!("settings reload kept image mode but no image was available"),
+                Err(error) => {
+                    warn!(error = %error, "failed to apply wallpaper after settings reload")
+                }
+            }
         }
     }
     sync_settings_ui_preview_assets(rotation, last_image_id.as_deref());
@@ -1347,6 +1424,12 @@ struct SettingsUiPreviewState {
     next_asset: Option<PreviewAsset>,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum LockedImageSwitchOutcome {
+    Applied { id: String, changed: bool },
+    Unavailable,
+}
+
 fn build_settings_load_result(
     config_path: &Path,
     rotation: &mut RotationManager,
@@ -1382,9 +1465,15 @@ fn build_settings_ui_preview_state(
 
     SettingsUiPreviewState {
         image_preview: SettingsImagePreview {
+            current_id: current_candidate
+                .as_ref()
+                .map(|candidate| candidate.id.clone()),
             current_src: current_asset
                 .as_ref()
                 .map(|asset| build_preview_src("current", asset)),
+            next_id: next_candidate
+                .as_ref()
+                .map(|candidate| candidate.id.clone()),
             next_src: next_asset
                 .as_ref()
                 .map(|asset| build_preview_src("next", asset)),
@@ -1575,6 +1664,33 @@ where
     Ok(candidates)
 }
 
+async fn try_switch_to_locked_image(
+    rotation: &mut RotationManager,
+    cache: &CacheManager,
+    backend: &dyn wallpaper::WallpaperBackend,
+    config: &config::AuraConfig,
+    candidate_id: &str,
+    last_image_id: Option<&str>,
+) -> Result<LockedImageSwitchOutcome> {
+    let (candidate, changed) = if Some(candidate_id) == last_image_id {
+        match rotation.candidate_by_id(candidate_id) {
+            Some(candidate) => (candidate, false),
+            None => return Ok(LockedImageSwitchOutcome::Unavailable),
+        }
+    } else {
+        match rotation.take_by_id(candidate_id) {
+            Some(candidate) => (candidate, true),
+            None => return Ok(LockedImageSwitchOutcome::Unavailable),
+        }
+    };
+
+    apply_selected_candidate(&candidate, rotation, cache, backend, config).await?;
+    Ok(LockedImageSwitchOutcome::Applied {
+        id: candidate.id,
+        changed,
+    })
+}
+
 async fn try_switch_once(
     rotation: &mut RotationManager,
     cache: &CacheManager,
@@ -1595,11 +1711,19 @@ async fn try_switch_once(
         let resolved = match candidate.resolve_local_path().await {
             Ok(Some(path)) => path,
             Ok(None) if matches!(candidate.origin, Origin::Rss) => {
-                warn!(id = %candidate.id, input = %source_input, "skipping RSS image with no downloadable content");
+                warn!(
+                    id = %candidate.id,
+                    input = %source_input,
+                    "skipping RSS image with no downloadable content"
+                );
                 continue;
             }
             Ok(None) => {
-                warn!(id = %candidate.id, input = %source_input, "skipping image candidate with no local path");
+                warn!(
+                    id = %candidate.id,
+                    input = %source_input,
+                    "skipping image candidate with no local path"
+                );
                 continue;
             }
             Err(error) if matches!(candidate.origin, Origin::Rss) => {
@@ -1642,6 +1766,51 @@ async fn try_switch_once(
     }
 
     Ok(None)
+}
+
+async fn apply_selected_candidate(
+    candidate: &ImageCandidate,
+    rotation: &mut RotationManager,
+    cache: &CacheManager,
+    backend: &dyn wallpaper::WallpaperBackend,
+    config: &config::AuraConfig,
+) -> Result<()> {
+    let source_input = candidate.display_source();
+    let resolved = match candidate.resolve_local_path().await {
+        Ok(Some(path)) => path,
+        Ok(None) if matches!(candidate.origin, Origin::Rss) => {
+            bail!("RSS image has no downloadable content")
+        }
+        Ok(None) => bail!("image candidate has no local path"),
+        Err(error) => {
+            return Err(error).with_context(|| format!("failed to resolve {}", source_input));
+        }
+    };
+
+    let processed = image_pipeline::prepare_for_output(
+        &resolved,
+        cache,
+        config.image.format,
+        config.image.jpeg_quality,
+    )
+    .with_context(|| format!("failed to process {}", resolved.display()))?;
+
+    backend
+        .set_wallpaper(&processed)
+        .with_context(|| format!("failed to set wallpaper {}", processed.display()))?;
+
+    prefetch_next_candidate(rotation);
+
+    info!(
+        id = %candidate.id,
+        source = %origin_name(candidate.origin),
+        input = %source_input,
+        resolved = %resolved.display(),
+        output = %processed.display(),
+        "wallpaper updated"
+    );
+
+    Ok(())
 }
 
 fn prefetch_next_candidate(rotation: &mut RotationManager) {
@@ -2152,8 +2321,16 @@ mod tests {
         let preview_state = build_settings_ui_preview_state(&mut rotation, Some("current"));
 
         assert_eq!(
+            preview_state.image_preview.current_id,
+            Some("current".to_string())
+        );
+        assert_eq!(
             preview_state.image_preview.current_src,
             Some("/preview/current?rev=current-0".to_string())
+        );
+        assert_eq!(
+            preview_state.image_preview.next_id,
+            Some("next".to_string())
         );
         assert_eq!(
             preview_state.image_preview.next_src,
@@ -2179,7 +2356,12 @@ mod tests {
 
         let preview_state = build_settings_ui_preview_state(&mut rotation, None);
 
+        assert_eq!(preview_state.image_preview.current_id, None);
         assert_eq!(preview_state.image_preview.current_src, None);
+        assert_eq!(
+            preview_state.image_preview.next_id,
+            Some("next".to_string())
+        );
         assert_eq!(
             preview_state.image_preview.next_src,
             Some("/preview/next?rev=next-0".to_string())
@@ -2212,9 +2394,141 @@ mod tests {
 
         let preview_state = build_settings_ui_preview_state(&mut rotation, None);
 
+        assert_eq!(preview_state.image_preview.current_id, None);
         assert_eq!(preview_state.image_preview.current_src, None);
+        assert_eq!(
+            preview_state.image_preview.next_id,
+            Some("preview".to_string())
+        );
         assert_eq!(preview_state.image_preview.next_src, None);
         assert_eq!(server.hits("/preview.png"), 0);
+    }
+
+    #[tokio::test]
+    async fn try_switch_to_locked_image_uses_requested_next_candidate() {
+        let tmp = tempdir().unwrap();
+        let current_path = tmp.path().join("current.png");
+        let next_path = tmp.path().join("next.png");
+        fs::write(&current_path, tiny_png_bytes_with_color([10, 20, 30, 255])).unwrap();
+        fs::write(&next_path, tiny_png_bytes_with_color([200, 120, 40, 255])).unwrap();
+
+        let current =
+            ImageCandidate::local("current".to_string(), Origin::Directory, current_path, None);
+        let next = ImageCandidate::local("next".to_string(), Origin::Directory, next_path, None);
+
+        let mut rotation = RotationManager::new();
+        rotation.rebuild_pool(vec![current, next]);
+        rotation.restore_state(&PersistedState {
+            remaining_queue: vec!["next".to_string()],
+            shown_ids: vec!["current".to_string()],
+            last_image_id: Some("current".to_string()),
+        });
+
+        let config = test_config(tmp.path());
+        let cache = CacheManager::new(&config).unwrap();
+        let backend = RecordingBackend::default();
+
+        let outcome = try_switch_to_locked_image(
+            &mut rotation,
+            &cache,
+            &backend,
+            &config,
+            "next",
+            Some("current"),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            outcome,
+            LockedImageSwitchOutcome::Applied {
+                id: "next".to_string(),
+                changed: true,
+            }
+        );
+        assert_eq!(backend.calls(), 1);
+    }
+
+    #[tokio::test]
+    async fn try_switch_to_locked_image_reapplies_current_without_advancing() {
+        let tmp = tempdir().unwrap();
+        let current_path = tmp.path().join("current.png");
+        let next_path = tmp.path().join("next.png");
+        fs::write(&current_path, tiny_png_bytes_with_color([10, 20, 30, 255])).unwrap();
+        fs::write(&next_path, tiny_png_bytes_with_color([200, 120, 40, 255])).unwrap();
+
+        let current =
+            ImageCandidate::local("current".to_string(), Origin::Directory, current_path, None);
+        let next = ImageCandidate::local("next".to_string(), Origin::Directory, next_path, None);
+
+        let mut rotation = RotationManager::new();
+        rotation.rebuild_pool(vec![current, next]);
+        rotation.restore_state(&PersistedState {
+            remaining_queue: vec!["next".to_string()],
+            shown_ids: vec!["current".to_string()],
+            last_image_id: Some("current".to_string()),
+        });
+
+        let config = test_config(tmp.path());
+        let cache = CacheManager::new(&config).unwrap();
+        let backend = RecordingBackend::default();
+
+        let outcome = try_switch_to_locked_image(
+            &mut rotation,
+            &cache,
+            &backend,
+            &config,
+            "current",
+            Some("current"),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            outcome,
+            LockedImageSwitchOutcome::Applied {
+                id: "current".to_string(),
+                changed: false,
+            }
+        );
+        assert_eq!(backend.calls(), 1);
+        assert_eq!(rotation.peek_next().unwrap().id, "next");
+    }
+
+    #[tokio::test]
+    async fn try_switch_to_locked_image_keeps_current_when_candidate_is_missing() {
+        let tmp = tempdir().unwrap();
+        let current_path = tmp.path().join("current.png");
+        fs::write(&current_path, tiny_png_bytes_with_color([10, 20, 30, 255])).unwrap();
+
+        let current =
+            ImageCandidate::local("current".to_string(), Origin::Directory, current_path, None);
+
+        let mut rotation = RotationManager::new();
+        rotation.rebuild_pool(vec![current]);
+        rotation.restore_state(&PersistedState {
+            remaining_queue: Vec::new(),
+            shown_ids: vec!["current".to_string()],
+            last_image_id: Some("current".to_string()),
+        });
+
+        let config = test_config(tmp.path());
+        let cache = CacheManager::new(&config).unwrap();
+        let backend = RecordingBackend::default();
+
+        let outcome = try_switch_to_locked_image(
+            &mut rotation,
+            &cache,
+            &backend,
+            &config,
+            "missing",
+            Some("current"),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(outcome, LockedImageSwitchOutcome::Unavailable);
+        assert_eq!(backend.calls(), 0);
     }
 
     #[test]

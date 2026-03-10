@@ -101,6 +101,24 @@ impl RotationManager {
         self.pool.get(id).cloned()
     }
 
+    pub fn candidate_by_id(&self, id: &str) -> Option<ImageCandidate> {
+        self.pool.get(id).cloned()
+    }
+
+    pub fn take_by_id(&mut self, id: &str) -> Option<ImageCandidate> {
+        if self.remaining.is_empty() {
+            self.refill_cycle();
+        }
+
+        let index = self
+            .remaining
+            .iter()
+            .position(|candidate_id| candidate_id == id)?;
+        let selected_id = self.remaining.remove(index)?;
+        self.shown_current_cycle.insert(selected_id.clone());
+        self.pool.get(&selected_id).cloned()
+    }
+
     pub fn pool_size(&self) -> usize {
         self.pool.len()
     }
@@ -155,5 +173,22 @@ mod tests {
             let next = rotation.next().unwrap();
             assert!(seen.insert(next.id));
         }
+    }
+
+    #[test]
+    fn take_by_id_consumes_requested_candidate_without_changing_pool() {
+        let mut rotation = RotationManager::new();
+        rotation.rebuild_pool(vec![candidate("a"), candidate("b"), candidate("c")]);
+        rotation.restore_state(&PersistedState {
+            remaining_queue: vec!["a".to_string(), "b".to_string(), "c".to_string()],
+            shown_ids: Vec::new(),
+            last_image_id: None,
+        });
+
+        let selected = rotation.take_by_id("b").unwrap();
+
+        assert_eq!(selected.id, "b");
+        assert_eq!(rotation.peek_next().unwrap().id, "a");
+        assert!(rotation.candidate_by_id("b").is_some());
     }
 }

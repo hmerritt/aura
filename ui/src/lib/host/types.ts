@@ -61,7 +61,9 @@ export interface SettingsLoadResult {
   document: SettingsDocument;
   warnings: ConfigWarning[];
   imagePreview: {
+    currentId: string | null;
     currentSrc: string | null;
+    nextId: string | null;
     nextSrc: string | null;
   };
   previewFrame: {
@@ -83,6 +85,11 @@ export interface BootstrapPayload {
 export interface SaveSettingsPayload {
   result: SettingsLoadResult;
   restartRequested: boolean;
+}
+
+export interface SaveSettingsRequest {
+  document: SettingsDocument;
+  lockedImageId: string | null;
 }
 
 export interface AuraHostBridge {
@@ -107,7 +114,7 @@ export type HostRequestMap = {
   bootstrap: Record<string, never>;
   load_settings: Record<string, never>;
   validate_settings: SettingsDocument;
-  save_settings: SettingsDocument;
+  save_settings: SaveSettingsRequest;
   close_window: Record<string, never>;
 };
 
