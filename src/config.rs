@@ -238,8 +238,12 @@ pub struct SettingsValidationResult {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SettingsImagePreview {
+    #[serde(rename = "currentId")]
+    pub current_id: Option<String>,
     #[serde(rename = "currentSrc")]
     pub current_src: Option<String>,
+    #[serde(rename = "nextId")]
+    pub next_id: Option<String>,
     #[serde(rename = "nextSrc")]
     pub next_src: Option<String>,
 }
@@ -2024,7 +2028,9 @@ shader = {{
             ShaderDesktopScope::Primary
         );
         assert_eq!(loaded.document.shader.color_space, ShaderColorSpace::Srgb);
+        assert_eq!(loaded.image_preview.current_id, None);
         assert_eq!(loaded.image_preview.current_src, None);
+        assert_eq!(loaded.image_preview.next_id, None);
         assert_eq!(loaded.image_preview.next_src, None);
         assert_eq!(loaded.preview_frame.width, 16);
         assert_eq!(loaded.preview_frame.height, 9);

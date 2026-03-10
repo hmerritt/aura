@@ -36,9 +36,24 @@ vec3 col = mix(colorA, colorB, t);
     fragColor = vec4(col, 1);
 }`;
 
+type LockedImageSelection = {
+	id: string;
+	src: string;
+};
+
+function toLockedImageSelection(
+	id: string | null | undefined,
+	src: string | null | undefined
+): LockedImageSelection | null {
+	if (!id || !src) return null;
+	return { id, src };
+}
+
 export function IndexRoute() {
 	const [settings, setSettings] = useState<SettingsLoadResult | null>(null);
 	const [hasLoadError, setHasLoadError] = useState(false);
+	const [lockedImageSelection, setLockedImageSelection] =
+		useState<LockedImageSelection | null>(null);
 
 	useEffect(() => {
 		let isMounted = true;
@@ -48,6 +63,14 @@ export function IndexRoute() {
 			.then((result) => {
 				if (!isMounted) return;
 				setSettings(result);
+				setLockedImageSelection(
+					result.document.renderer === "image"
+						? toLockedImageSelection(
+								result.imagePreview.currentId,
+								result.imagePreview.currentSrc
+							)
+						: null
+				);
 				setHasLoadError(false);
 			})
 			.catch(() => {
@@ -63,11 +86,44 @@ export function IndexRoute() {
 	const selectedRenderer = settings?.document.renderer ?? null;
 	const canSelectMode = settings !== null;
 	const previewFrame = settings?.previewFrame ?? { width: 16, height: 9 };
-	const imageModePreviewSrc =
+	const currentImageSelection = toLockedImageSelection(
+		settings?.imagePreview.currentId,
+		settings?.imagePreview.currentSrc
+	);
+	const nextImageSelection = toLockedImageSelection(
+		settings?.imagePreview.nextId,
+		settings?.imagePreview.nextSrc
+	);
+	const derivedImageSelection =
 		selectedRenderer === "image"
-			? settings?.imagePreview.currentSrc ?? settings?.imagePreview.nextSrc ?? null
-			: settings?.imagePreview.nextSrc ?? settings?.imagePreview.currentSrc ?? null;
+			? currentImageSelection ?? nextImageSelection
+			: nextImageSelection ?? currentImageSelection;
+	const imageModePreviewSrc = (lockedImageSelection ?? derivedImageSelection)?.src ?? null;
 	const setRenderer = (renderer: RendererMode) => {
+		if (renderer === "image" && settings && lockedImageSelection === null) {
+			const intendedSelection =
+				settings.document.renderer === "image"
+					? toLockedImageSelection(
+							settings.imagePreview.currentId,
+							settings.imagePreview.currentSrc
+						) ??
+						toLockedImageSelection(
+							settings.imagePreview.nextId,
+							settings.imagePreview.nextSrc
+						)
+					: toLockedImageSelection(
+							settings.imagePreview.nextId,
+							settings.imagePreview.nextSrc
+						) ??
+						toLockedImageSelection(
+							settings.imagePreview.currentId,
+							settings.imagePreview.currentSrc
+						);
+			if (intendedSelection) {
+				setLockedImageSelection(intendedSelection);
+			}
+		}
+
 		setSettings((current) => {
 			if (!current) return current;
 			return {
