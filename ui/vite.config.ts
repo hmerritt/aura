@@ -1,11 +1,10 @@
+import babel from "@rolldown/plugin-babel";
+import stylex from "@stylexjs/unplugin";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
-import react from "@vitejs/plugin-react";
+import react, { reactCompilerPreset } from "@vitejs/plugin-react";
 import path from "path";
 import { ViteMinifyPlugin as minify } from "vite-plugin-minify";
-import tsconfigPaths from "vite-tsconfig-paths";
 import { ViteUserConfig, defineConfig } from "vitest/config";
-
-import styleX from "./config/stylex";
 
 const isProd = process.env.NODE_ENV === "production";
 const isDev = !isProd;
@@ -43,13 +42,13 @@ export default defineConfig({
     build: {
         sourcemap: isDev,
         minify: isProd,
-        target: "es2022",
-        outDir: "dist",
-        emptyOutDir: true,
         rollupOptions: {
             // Bug in react-router-devtools? - this is required now:
             external: ["solid-js", "solid-js/web"]
         }
+    },
+    resolve: {
+        tsconfigPaths: true
     },
     define: {
         "process.env": {}
@@ -62,25 +61,19 @@ export default defineConfig({
         }
     },
     plugins: [
-        tsconfigPaths(),
-        react({
-            babel: {
-                plugins: ["babel-plugin-react-compiler"]
-            }
-        }),
-        styleX({
+        stylex.vite({
             aliases,
             debug: isDev,
             test: false, // Breaks CSS injection for some reason
             runtimeInjection: isTest,
             useCSSLayers: true
         }),
+        react(),
+        babel({ presets: [reactCompilerPreset()] }),
         tanstackRouter({
             routesDirectory: "src/view/routes"
         }),
-        minify({
-            minifyCSS: true
-        })
+        minify()
     ],
     test: {
         globals: false,
