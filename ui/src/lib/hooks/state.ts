@@ -10,5 +10,5 @@ import { type RootState, store } from "state";
  * const count = useStore((state) => state.count.current);
  */
 export const useStore = <TSelected>(
-	selector: (state: RootState) => TSelected
+    selector: (state: RootState) => TSelected
 ): TSelected => useStoreDefault(store, selector);

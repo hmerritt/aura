@@ -41,5 +41,5 @@ const FRAGMENT_SHADER_TEMPLATE = `#version 300 es
 `;
 
 export const createFragmentShaderSource = (mainImageShader: string) => {
-	return FRAGMENT_SHADER_TEMPLATE.replace("{{mainImageShader}}", mainImageShader);
+    return FRAGMENT_SHADER_TEMPLATE.replace("{{mainImageShader}}", mainImageShader);
 };

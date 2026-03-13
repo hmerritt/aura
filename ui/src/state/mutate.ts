@@ -6,9 +6,9 @@
  * @TODO: Rename this to `middleware` ??
  */
 export type MutateCallbackFn = <TState>(
-	prevState: TState,
-	nextState: TState,
-	mutateTitle?: string
+    prevState: TState,
+    nextState: TState,
+    mutateTitle?: string
 ) => void;
 
 /**
@@ -25,25 +25,25 @@ export type MutateCallbackFn = <TState>(
  * // next = { count: 2 }
  */
 export const mutate = <TState>(
-	state: TState,
-	mutateFn: (draft: TState) => void,
-	options?: {
-		callbacks?: MutateCallbackFn[];
-		mutateTitle?: string;
-	}
+    state: TState,
+    mutateFn: (draft: TState) => void,
+    options?: {
+        callbacks?: MutateCallbackFn[];
+        mutateTitle?: string;
+    }
 ): TState => {
-	// Shallow copy + mutate
-	const nextState = { ...state };
-	mutateFn(nextState);
+    // Shallow copy + mutate
+    const nextState = { ...state };
+    mutateFn(nextState);
 
-	// Run callbacks
-	if (options?.callbacks?.length) {
-		for (const cb of options?.callbacks ?? []) {
-			cb(state, nextState, options?.mutateTitle);
-		}
-	}
+    // Run callbacks
+    if (options?.callbacks?.length) {
+        for (const cb of options?.callbacks ?? []) {
+            cb(state, nextState, options?.mutateTitle);
+        }
+    }
 
-	return nextState;
+    return nextState;
 };
 
 /**
@@ -57,13 +57,13 @@ export const mutate = <TState>(
  * }, [mutateLogger], "count increment");
  */
 export const mutateLogger: MutateCallbackFn = (
-	prevState: any,
-	nextState: any,
-	mutateTitle = "(state)"
+    prevState: any,
+    nextState: any,
+    mutateTitle = "(state)"
 ) => {
-	if (!env.isDev) return;
-	logn.groupCollapsed("state", `${mutateTitle}`);
-	console.log("prev", prevState);
-	console.log("next", nextState);
-	logn.groupEnd("state");
+    if (!env.isDev) return;
+    logn.groupCollapsed("state", `${mutateTitle}`);
+    console.log("prev", prevState);
+    console.log("next", nextState);
+    logn.groupEnd("state");
 };

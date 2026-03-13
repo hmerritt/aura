@@ -18,27 +18,27 @@ import { getGlobal, injectRun, setGlobalValue } from "./utils";
 import { versionString } from "./version";
 
 export const globalInit = () => {
-	// Prevent double initialization
-	if (getGlobal().__init) return;
-	setGlobalValue("__init", true);
+    // Prevent double initialization
+    if (getGlobal().__init) return;
+    setGlobalValue("__init", true);
 
-	// Inject global functions.
-	injectRun();
-	injectEnv();
-	injectLog();
-	injectFeature();
+    // Inject global functions.
+    injectRun();
+    injectEnv();
+    injectLog();
+    injectFeature();
 
-	// Log app name+version. Hide for tests to reduce clutter in console.
-	if (!env.isTest) {
-		// eslint-disable-next-line no-console
-		console.log(`%c${versionString()}`, "font-size: 1.1em;padding: 1rem 0;");
-	}
+    // Log app name+version. Hide for tests to reduce clutter in console.
+    if (!env.isTest) {
+        // eslint-disable-next-line no-console
+        console.log(`%c${versionString()}`, "font-size: 1.1em;padding: 1rem 0;");
+    }
 
-	if (env.isDev) {
-		injectDevTools();
-		// eslint-disable-next-line no-console
-		console.log("env", env);
-	}
+    if (env.isDev) {
+        injectDevTools();
+        // eslint-disable-next-line no-console
+        console.log("env", env);
+    }
 };
 
 globalInit();
