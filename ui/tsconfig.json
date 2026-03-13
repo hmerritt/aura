@@ -1,33 +1,34 @@
 {
-	"compilerOptions": {
-		"allowJs": true,
-		"allowSyntheticDefaultImports": true,
-		"paths": {
-			"*": ["./src/*"]
-		},
-		"esModuleInterop": true,
-		"forceConsistentCasingInFileNames": true,
-		"isolatedModules": true,
-		"jsx": "react-jsx",
-		"lib": ["DOM", "DOM.Iterable", "ESNext"],
-		"module": "esnext",
-		"moduleResolution": "bundler",
-		"noEmit": true,
-		"resolveJsonModule": true,
-		"skipLibCheck": true,
-		"sourceMap": true,
-		"strict": true,
-		"target": "ESNext",
-		"typeRoots": ["./node_modules/@types", "src/lib/global", "./src/types"],
-		"useDefineForClassFields": true
-	},
-	"include": [
-		"src/**/*",
-		"scripts/**/*",
-		"tests-e2e/**/*",
-		"config/**/*",
-		"bootstrap.ts",
-		"playwright.config.ts",
-		"vite.config.ts"
-	]
+    "compilerOptions": {
+        "allowJs": true,
+        "allowSyntheticDefaultImports": true,
+        "paths": {
+            "*": ["./src/*"]
+        },
+        "esModuleInterop": true,
+        "forceConsistentCasingInFileNames": true,
+        "isolatedModules": true,
+        "jsx": "react-jsx",
+        "lib": ["DOM", "DOM.Iterable", "ESNext"],
+        "module": "esnext",
+        "moduleResolution": "bundler",
+        "noEmit": true,
+        "resolveJsonModule": true,
+        "skipLibCheck": true,
+        "sourceMap": true,
+        "strict": true,
+        "target": "ESNext",
+        "types": ["bun", "bun-types", "vite/client", "vitest/globals"],
+        "typeRoots": ["./node_modules/@types", "src/lib/global", "./src/types"],
+        "useDefineForClassFields": true
+    },
+    "include": [
+        "src/**/*",
+        "scripts/**/*",
+        "tests-e2e/**/*",
+        "config/**/*",
+        "bootstrap.ts",
+        "playwright.config.ts",
+        "vite.config.ts"
+    ]
 }
