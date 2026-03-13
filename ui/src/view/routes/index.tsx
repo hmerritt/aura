@@ -4,10 +4,7 @@ import { useEffect, useState } from "react";
 
 import { env } from "lib/global/env";
 import { auraSettingsHost } from "lib/host/client";
-import {
-	type RendererMode,
-	type SettingsLoadResult
-} from "lib/host/types";
+import { type RendererMode, type SettingsLoadResult } from "lib/host/types";
 
 import { Shader } from "view/components/experimental/Shader";
 
@@ -96,29 +93,30 @@ export function IndexRoute() {
 	);
 	const derivedImageSelection =
 		selectedRenderer === "image"
-			? currentImageSelection ?? nextImageSelection
-			: nextImageSelection ?? currentImageSelection;
-	const imageModePreviewSrc = (lockedImageSelection ?? derivedImageSelection)?.src ?? null;
+			? (currentImageSelection ?? nextImageSelection)
+			: (nextImageSelection ?? currentImageSelection);
+	const imageModePreviewSrc =
+		(lockedImageSelection ?? derivedImageSelection)?.src ?? null;
 	const setRenderer = (renderer: RendererMode) => {
 		if (renderer === "image" && settings && lockedImageSelection === null) {
 			const intendedSelection =
 				settings.document.renderer === "image"
-					? toLockedImageSelection(
+					? (toLockedImageSelection(
 						settings.imagePreview.currentId,
 						settings.imagePreview.currentSrc
 					) ??
-					toLockedImageSelection(
-						settings.imagePreview.nextId,
-						settings.imagePreview.nextSrc
-					)
-					: toLockedImageSelection(
+						toLockedImageSelection(
+							settings.imagePreview.nextId,
+							settings.imagePreview.nextSrc
+						))
+					: (toLockedImageSelection(
 						settings.imagePreview.nextId,
 						settings.imagePreview.nextSrc
 					) ??
-					toLockedImageSelection(
-						settings.imagePreview.currentId,
-						settings.imagePreview.currentSrc
-					);
+						toLockedImageSelection(
+							settings.imagePreview.currentId,
+							settings.imagePreview.currentSrc
+						));
 			if (intendedSelection) {
 				setLockedImageSelection(intendedSelection);
 			}
@@ -149,7 +147,9 @@ export function IndexRoute() {
 					/>
 					<h1 {...stylex.props(styles.title)}>aura</h1>
 				</div>
-				<p {...stylex.props(styles.version)}>{`Version ${env.appVersion ?? "unknown"}`}</p>
+				<p
+					{...stylex.props(styles.version)}
+				>{`Version ${env.appVersion ?? "unknown"}`}</p>
 			</header>
 
 			<main {...stylex.props(styles.content)}>
@@ -158,15 +158,18 @@ export function IndexRoute() {
 					data-testid="mode-selector-section"
 					{...stylex.props(styles.section)}
 				>
-					<div {...stylex.props(styles.sectionHeader)}>
-						<h2 {...stylex.props(styles.sectionTitle)}>Mode</h2>
-						{hasLoadError && (
-							<p {...stylex.props(styles.sectionMeta)}>Unable to load current settings.</p>
-						)}
-					</div>
+					{hasLoadError && (
+						<div {...stylex.props(styles.sectionHeader)}>
+							<p {...stylex.props(styles.sectionMeta)}>
+								Unable to load current settings.
+							</p>
+						</div>
+					)}
 
 					<fieldset {...stylex.props(styles.fieldset)}>
-						<legend {...stylex.props(styles.legend)}>Choose how aura renders your desktop</legend>
+						<legend {...stylex.props(styles.legend)}>
+							Choose how aura renders your desktop
+						</legend>
 
 						<div
 							data-testid="mode-selector-grid"
@@ -247,10 +250,7 @@ function ModeOption({
 	return (
 		<label
 			data-testid={`${mode}-mode-card`}
-			{...stylex.props(
-				styles.optionLabel,
-				disabled && styles.optionLabelDisabled
-			)}
+			{...stylex.props(styles.optionLabel, disabled && styles.optionLabelDisabled)}
 		>
 			<input
 				aria-label={label}
@@ -263,28 +263,18 @@ function ModeOption({
 				{...stylex.props(styles.radioInput)}
 			/>
 
-			<span
-				{...stylex.props(
-					styles.optionCard
-				)}
-			>
+			<span {...stylex.props(styles.optionCard)}>
 				<span
 					data-testid={`${mode}-mode-preview-frame`}
-					style={{ aspectRatio: `${previewFrame.width} / ${previewFrame.height}` }}
-					{...stylex.props(styles.previewFrame, isSelected && styles.optionCardSelected)}
+					style={{
+						aspectRatio: `${previewFrame.width} / ${previewFrame.height}`
+					}}
+					{...stylex.props(
+						styles.previewFrame,
+						isSelected && styles.optionCardSelected
+					)}
 				>
 					{preview}
-				</span>
-				<span {...stylex.props(styles.optionMeta)}>
-					<span
-						{...stylex.props(
-							styles.optionTitle,
-							isSelected && styles.optionTitleSelected
-						)}
-					>
-						{label}
-					</span>
-					{description && <span {...stylex.props(styles.optionDescription)}>{description}</span>}
 				</span>
 			</span>
 		</label>
@@ -350,12 +340,6 @@ const styles = stylex.create({
 		flexDirection: "column",
 		gap: "6px"
 	},
-	sectionTitle: {
-		fontSize: "1.4rem",
-		lineHeight: 1,
-		fontWeight: 450,
-		color: "#111111"
-	},
 	sectionMeta: {
 		fontSize: "1.2rem",
 		lineHeight: 1.4,
@@ -399,7 +383,7 @@ const styles = stylex.create({
 	optionCard: {
 		display: "flex",
 		flexDirection: "column",
-		gap: "14px",
+		gap: "14px"
 	},
 	optionCardSelected: {
 		borderColor: "#00B7EC"
@@ -409,42 +393,24 @@ const styles = stylex.create({
 		width: "100%",
 		overflow: "hidden",
 		backgroundColor: "#E5EAF2",
-		borderWidth: "1px",
+		borderWidth: "2px",
 		borderStyle: "solid",
 		borderColor: "rgba(0, 0, 0, 0.12)",
-		borderRadius: "20px",
-		boxShadow: "0 2px 10px rgba(0, 0, 0, 0.08)",
+		borderRadius: "15px",
+		boxShadow: {
+			default: "rgba(100, 100, 111, 0.2) 0px 7px 29px 0px",
+			":hover":
+				"rgba(50, 50, 93, 0.25) 0px 30px 60px -12px, rgba(0, 0, 0, 0.3) 0px 18px 36px -18px"
+		},
 		transition:
-			"transform 160ms ease, border-color 160ms ease, background-color 160ms ease, box-shadow 160ms ease",
-		":hover": {
-			transform: "translateY(-1px)",
-			boxShadow: "0 4px 40px rgba(0, 0, 0, 0.25)"
-		}
+			"transform 400ms ease, border-color 400ms ease, background-color 400ms ease, box-shadow 400ms ease",
+		willChange: "transform, border-color, background-color, box-shadow, height",
+		transform: { ":hover": "translateY(-1px)" }
 	},
 	media: {
 		display: "block",
 		width: "100%",
 		height: "100%",
 		objectFit: "cover"
-	},
-	optionMeta: {
-		display: "flex",
-		flexDirection: "column",
-		gap: "6px"
-	},
-	optionTitle: {
-		fontSize: "1.7rem",
-		lineHeight: 1,
-		fontWeight: 500,
-		color: "#20242D"
-	},
-	optionTitleSelected: {
-		color: "#1742B0"
-	},
-	optionDescription: {
-		fontSize: "1.2rem",
-		lineHeight: 1.3,
-		fontWeight: 500,
-		color: "#6F7786"
 	}
 });
