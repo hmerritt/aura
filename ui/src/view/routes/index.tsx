@@ -1,11 +1,19 @@
 import * as stylex from "@stylexjs/stylex";
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 
+import { useStore } from "lib/hooks";
 import { env } from "lib/global/env";
-import { auraSettingsHost } from "lib/host/client";
-import { type RendererMode, type SettingsLoadResult } from "lib/host/types";
-
+import type { RendererMode } from "lib/host/types";
+import { settingsLoad, settingsSetRenderer } from "state/actions";
+import {
+	DEFAULT_PREVIEW_FRAME,
+	resolveImageModePreviewSrc
+} from "state/slices/settings/settingsShared";
+import {
+	settingsStore,
+	type ISettingsStore
+} from "state/slices/settings/settingsStore";
 import { Shader } from "view/components/experimental/Shader";
 
 export const Route = createFileRoute("/")({
@@ -33,106 +41,53 @@ vec3 col = mix(colorA, colorB, t);
     fragColor = vec4(col, 1);
 }`;
 
-type LockedImageSelection = {
-	id: string;
-	src: string;
+type IndexRouteViewModel = {
+	canSelectMode: boolean;
+	hasLoadError: boolean;
+	imageModePreviewSrc: string | null;
+	previewFrame: {
+		width: number;
+		height: number;
+	};
+	selectedRenderer: RendererMode | null;
+	status: ISettingsStore["status"];
 };
 
-function toLockedImageSelection(
-	id: string | null | undefined,
-	src: string | null | undefined
-): LockedImageSelection | null {
-	if (!id || !src) return null;
-	return { id, src };
+function selectIndexRouteViewModel(
+	settings: ISettingsStore | undefined
+): IndexRouteViewModel {
+	const resolvedSettings = settings ?? settingsStore;
+
+	return {
+		status: resolvedSettings.status,
+		hasLoadError: resolvedSettings.status === "error",
+		canSelectMode: resolvedSettings.result !== null,
+		selectedRenderer: resolvedSettings.result?.document.renderer ?? null,
+		previewFrame: resolvedSettings.result?.previewFrame ?? DEFAULT_PREVIEW_FRAME,
+		imageModePreviewSrc: resolveImageModePreviewSrc(
+			resolvedSettings.result,
+			resolvedSettings.lockedImageSelection
+		)
+	};
 }
 
 export function IndexRoute() {
-	const [settings, setSettings] = useState<SettingsLoadResult | null>(null);
-	const [hasLoadError, setHasLoadError] = useState(false);
-	const [lockedImageSelection, setLockedImageSelection] =
-		useState<LockedImageSelection | null>(null);
+	const {
+		canSelectMode,
+		hasLoadError,
+		imageModePreviewSrc,
+		previewFrame,
+		selectedRenderer,
+		status
+	} = useStore((state) => selectIndexRouteViewModel(state.settings));
 
 	useEffect(() => {
-		let isMounted = true;
-
-		void auraSettingsHost
-			.request("load_settings", {})
-			.then((result) => {
-				if (!isMounted) return;
-				setSettings(result);
-				setLockedImageSelection(
-					result.document.renderer === "image"
-						? toLockedImageSelection(
-							result.imagePreview.currentId,
-							result.imagePreview.currentSrc
-						)
-						: null
-				);
-				setHasLoadError(false);
-			})
-			.catch(() => {
-				if (!isMounted) return;
-				setHasLoadError(true);
-			});
-
-		return () => {
-			isMounted = false;
-		};
-	}, []);
-
-	const selectedRenderer = settings?.document.renderer ?? null;
-	const canSelectMode = settings !== null;
-	const previewFrame = settings?.previewFrame ?? { width: 16, height: 9 };
-	const currentImageSelection = toLockedImageSelection(
-		settings?.imagePreview.currentId,
-		settings?.imagePreview.currentSrc
-	);
-	const nextImageSelection = toLockedImageSelection(
-		settings?.imagePreview.nextId,
-		settings?.imagePreview.nextSrc
-	);
-	const derivedImageSelection =
-		selectedRenderer === "image"
-			? (currentImageSelection ?? nextImageSelection)
-			: (nextImageSelection ?? currentImageSelection);
-	const imageModePreviewSrc =
-		(lockedImageSelection ?? derivedImageSelection)?.src ?? null;
-	const setRenderer = (renderer: RendererMode) => {
-		if (renderer === "image" && settings && lockedImageSelection === null) {
-			const intendedSelection =
-				settings.document.renderer === "image"
-					? (toLockedImageSelection(
-						settings.imagePreview.currentId,
-						settings.imagePreview.currentSrc
-					) ??
-						toLockedImageSelection(
-							settings.imagePreview.nextId,
-							settings.imagePreview.nextSrc
-						))
-					: (toLockedImageSelection(
-						settings.imagePreview.nextId,
-						settings.imagePreview.nextSrc
-					) ??
-						toLockedImageSelection(
-							settings.imagePreview.currentId,
-							settings.imagePreview.currentSrc
-						));
-			if (intendedSelection) {
-				setLockedImageSelection(intendedSelection);
-			}
+		if (status !== "idle") {
+			return;
 		}
 
-		setSettings((current) => {
-			if (!current) return current;
-			return {
-				...current,
-				document: {
-					...current.document,
-					renderer
-				}
-			};
-		});
-	};
+		void settingsLoad();
+	}, [status]);
 
 	return (
 		<div {...stylex.props(styles.page)}>
@@ -147,9 +102,9 @@ export function IndexRoute() {
 					/>
 					<h1 {...stylex.props(styles.title)}>aura</h1>
 				</div>
-				<p
-					{...stylex.props(styles.version)}
-				>{`Version ${env.appVersion ?? "unknown"}`}</p>
+				<p {...stylex.props(styles.version)}>
+					{`Version ${env.appVersion ?? "unknown"}`}
+				</p>
 			</header>
 
 			<main {...stylex.props(styles.content)}>
@@ -182,7 +137,7 @@ export function IndexRoute() {
 								isSelected={selectedRenderer === "image"}
 								label="Image"
 								mode="image"
-								onSelect={setRenderer}
+								onSelect={settingsSetRenderer}
 								previewFrame={previewFrame}
 								preview={
 									imageModePreviewSrc ? (
@@ -203,7 +158,7 @@ export function IndexRoute() {
 								isSelected={selectedRenderer === "shader"}
 								label="Shader"
 								mode="shader"
-								onSelect={setRenderer}
+								onSelect={settingsSetRenderer}
 								previewFrame={previewFrame}
 								preview={
 									<Shader
@@ -224,7 +179,6 @@ export function IndexRoute() {
 }
 
 type ModeOptionProps = {
-	description?: string;
 	disabled: boolean;
 	isSelected: boolean;
 	label: string;
@@ -238,7 +192,6 @@ type ModeOptionProps = {
 };
 
 function ModeOption({
-	description,
 	disabled,
 	isSelected,
 	label,
@@ -266,12 +219,9 @@ function ModeOption({
 			<span {...stylex.props(styles.optionCard)}>
 				<span
 					data-testid={`${mode}-mode-preview-frame`}
-					style={{
-						aspectRatio: `${previewFrame.width} / ${previewFrame.height}`
-					}}
 					{...stylex.props(
-						styles.previewFrame,
-						isSelected && styles.optionCardSelected
+						styles.previewFrame(previewFrame.width, previewFrame.height),
+						isSelected && styles.previewFrameSelected
 					)}
 				>
 					{preview}
@@ -385,27 +335,30 @@ const styles = stylex.create({
 		flexDirection: "column",
 		gap: "14px"
 	},
-	optionCardSelected: {
-		borderColor: "#00B7EC"
-	},
-	previewFrame: {
+	previewFrame: (width: number, height: number) => ({
 		display: "block",
 		width: "100%",
+		aspectRatio: `${width} / ${height}`,
 		overflow: "hidden",
 		backgroundColor: "#E5EAF2",
 		borderWidth: "2px",
 		borderStyle: "solid",
 		borderColor: "rgba(0, 0, 0, 0.12)",
 		borderRadius: "15px",
+		transition:
+			"transform 400ms ease, border-color 400ms ease, background-color 400ms ease, box-shadow 400ms ease",
+		willChange: "transform, border-color, background-color, box-shadow",
+		transform: {
+			":hover": "translateY(-1px)"
+		},
 		boxShadow: {
 			default: "rgba(100, 100, 111, 0.2) 0px 7px 29px 0px",
 			":hover":
 				"rgba(50, 50, 93, 0.25) 0px 30px 60px -12px, rgba(0, 0, 0, 0.3) 0px 18px 36px -18px"
-		},
-		transition:
-			"transform 400ms ease, border-color 400ms ease, background-color 400ms ease, box-shadow 400ms ease",
-		willChange: "transform, border-color, background-color, box-shadow, height",
-		transform: { ":hover": "translateY(-1px)" }
+		}
+	}),
+	previewFrameSelected: {
+		borderColor: "#00B7EC"
 	},
 	media: {
 		display: "block",
