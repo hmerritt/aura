@@ -2,6 +2,37 @@ import { mutate, mutateLogger } from "./mutate";
 import { StoreWithPersist } from "./persist";
 import { colorStore } from "./slices/color/colorStore";
 import { countStore } from "./slices/count/countStore";
+import type { ISettingsStore } from "./slices/settings/settingsStore";
+import { settingsStore } from "./slices/settings/settingsStore";
+
+export const createInitialState = () => ({
+    color: { ...colorStore, colors: [...colorStore.colors] },
+    count: { ...countStore },
+    settings: { ...settingsStore }
+});
+
+export type RootState = ReturnType<typeof createInitialState>;
+export type PersistedRootState = Omit<RootState, "settings">;
+
+export const normalizeRootState = (
+    state: Partial<RootState> | RootState
+): RootState => {
+    const initialState = createInitialState();
+    const resolvedSettings: ISettingsStore = state.settings ?? initialState.settings;
+
+    return {
+        color: state.color ?? initialState.color,
+        count: state.count ?? initialState.count,
+        settings: resolvedSettings
+    };
+};
+
+export const partializePersistedState = (
+    state: RootState
+): PersistedRootState => {
+    const { settings: _settings, ...persistedState } = state;
+    return persistedState;
+};
 
 /**
  * Main state store for entire app ⚡.
@@ -29,17 +60,13 @@ import { countStore } from "./slices/count/countStore";
  * const count = useStore((state) => state.count.current);
  */
 export const store = new StoreWithPersist(
-    {
-        color: colorStore,
-        count: countStore
-    },
+    createInitialState(),
     {
         name: "store",
-        partialize: ({ ...state }) => state
+        partialize: partializePersistedState
     }
 );
 export default store;
-export type RootState = typeof store.state;
 
 /**
  * Update store state.
@@ -54,7 +81,7 @@ export type RootState = typeof store.state;
  */
 export const updateState = (mutateFn: (draft: RootState) => void) => {
     store.setState((state) => {
-        return mutate(state, mutateFn, {
+        return mutate(normalizeRootState(state), mutateFn, {
             callbacks: [mutateLogger],
             mutateTitle: `(state)`
         });
@@ -78,9 +105,10 @@ export const updateSlice = <T extends keyof RootState>(
     mutateFn: (draftSlice: RootState[T]) => void
 ) => {
     store.setState((state) => {
+        const normalizedState = normalizeRootState(state);
         return {
-            ...state,
-            [slice]: mutate(state[slice], mutateFn, {
+            ...normalizedState,
+            [slice]: mutate(normalizedState[slice], mutateFn, {
                 callbacks: [mutateLogger],
                 mutateTitle: `(slice) ${slice}`
             })

@@ -5,6 +5,10 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 
 import { env } from "lib/global/env";
 import type { SettingsDocument, SettingsLoadResult } from "lib/host/types";
+import { settingsReset } from "state/actions";
+import { store, type RootState } from "state";
+import { colorStore } from "state/slices/color/colorStore";
+import { countStore } from "state/slices/count/countStore";
 
 import { renderBasic } from "tests/render";
 
@@ -32,6 +36,7 @@ const PREVIEW_FRAME = {
     width: 18,
     height: 9
 };
+const compact = (value: string) => value.replace(/\s+/g, " ").trim();
 
 const createSettingsDocument = (
     renderer: SettingsDocument["renderer"]
@@ -86,6 +91,7 @@ const createSettingsLoadResult = (
 });
 
 beforeEach(() => {
+    settingsReset();
     loadSettingsMock.mockReset();
     loadSettingsMock.mockResolvedValue(createSettingsLoadResult("image"));
 });
@@ -130,8 +136,15 @@ describe("settings header", () => {
             CURRENT_IMAGE_PREVIEW_SRC
         );
         expect(screen.getByTestId("image-mode-preview-frame")).toHaveStyle(
-            "aspect-ratio: 18 / 9"
+            "aspect-ratio: var(--x-aspectRatio)"
         );
+        expect(
+            compact(
+                getComputedStyle(
+                    screen.getByTestId("image-mode-preview-frame")
+                ).getPropertyValue("--x-aspectRatio")
+            )
+        ).toBe("18 / 9");
         expect(screen.getByTestId("image-mode-preview-frame")).toHaveStyle(
             "border-color: rgb(0, 183, 236)"
         );
@@ -139,8 +152,15 @@ describe("settings header", () => {
             "box-shadow: 0 2px 10px rgba(0,0,0,.08)"
         );
         expect(screen.getByTestId("shader-mode-preview-frame")).toHaveStyle(
-            "aspect-ratio: 18 / 9"
+            "aspect-ratio: var(--x-aspectRatio)"
         );
+        expect(
+            compact(
+                getComputedStyle(
+                    screen.getByTestId("shader-mode-preview-frame")
+                ).getPropertyValue("--x-aspectRatio")
+            )
+        ).toBe("18 / 9");
         expect(screen.getByTestId("shader-mode-preview-frame")).toHaveStyle(
             "border-color: rgba(0, 0, 0, 0.12)"
         );
@@ -222,8 +242,15 @@ describe("settings header", () => {
         );
         expect(screen.queryByTestId("image-mode-preview")).not.toBeInTheDocument();
         expect(screen.getByTestId("image-mode-preview-frame")).toHaveStyle(
-            "aspect-ratio: 18 / 9"
+            "aspect-ratio: var(--x-aspectRatio)"
         );
+        expect(
+            compact(
+                getComputedStyle(
+                    screen.getByTestId("image-mode-preview-frame")
+                ).getPropertyValue("--x-aspectRatio")
+            )
+        ).toBe("18 / 9");
     });
 
     test("does not create a lock when shader mode has no real image preview", async () => {
@@ -253,6 +280,41 @@ describe("settings header", () => {
         expect(screen.getByTestId("image-mode-preview")).toHaveAttribute(
             "src",
             CURRENT_IMAGE_PREVIEW_SRC
+        );
+    });
+
+    test("renders a load error when settings cannot be fetched", async () => {
+        loadSettingsMock.mockRejectedValueOnce(new Error("host failed"));
+
+        await renderBasic(<IndexRoute />);
+
+        await waitFor(() =>
+            expect(
+                screen.getByText("Unable to load current settings.")
+            ).toBeInTheDocument()
+        );
+        expect(screen.getByRole("radiogroup", { name: "Renderer mode" })).toHaveAttribute(
+            "aria-busy",
+            "true"
+        );
+    });
+
+    test("recovers when the settings slice is missing from root state", async () => {
+        store.setState(
+            () =>
+                ({
+                    color: { ...colorStore, colors: [...colorStore.colors] },
+                    count: { ...countStore }
+                }) as RootState
+        );
+
+        await renderBasic(<IndexRoute />);
+
+        await waitFor(() =>
+            expect(loadSettingsMock).toHaveBeenCalledWith("load_settings", {})
+        );
+        await waitFor(() =>
+            expect(screen.getByRole("radio", { name: "Image" })).toBeChecked()
         );
     });
 });

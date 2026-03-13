@@ -3,11 +3,12 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { colorStore } from "state/slices/color/colorStore";
 import { countStore } from "state/slices/count/countStore";
-
-const createInitialState = (): RootState => ({
-    color: { ...colorStore, colors: [...colorStore.colors] },
-    count: { ...countStore }
-});
+import { settingsStore } from "state/slices/settings/settingsStore";
+import {
+    createInitialState,
+    normalizeRootState,
+    partializePersistedState
+} from "./store";
 
 const resetStore = (): RootState => {
     const initialState = createInitialState();
@@ -68,5 +69,43 @@ describe("updateSlice", () => {
         expect(nextState.color).toBe(prevColor);
         expect(prevCount.current).toBe(0);
         expect(nextState.count.current).toBe(7);
+    });
+});
+
+describe("partializePersistedState", () => {
+    it("excludes the settings slice from persistence", () => {
+        const persistedState = partializePersistedState(createInitialState());
+
+        expect(persistedState).toEqual({
+            color: { ...colorStore, colors: [...colorStore.colors] },
+            count: { ...countStore }
+        });
+    });
+});
+
+describe("normalizeRootState", () => {
+    it("restores the settings slice when it is missing", () => {
+        const normalizedState = normalizeRootState({
+            color: { ...colorStore, colors: [...colorStore.colors] },
+            count: { ...countStore }
+        });
+
+        expect(normalizedState.settings).toEqual({ ...settingsStore });
+    });
+
+    it("allows updateSlice to recover from a partial root state", () => {
+        store.setState(
+            () =>
+                ({
+                    color: { ...colorStore, colors: [...colorStore.colors] },
+                    count: { ...countStore }
+                }) as RootState
+        );
+
+        updateSlice("settings", (settings) => {
+            settings.status = "loading";
+        });
+
+        expect(store.state.settings.status).toBe("loading");
     });
 });
