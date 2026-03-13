@@ -8,11 +8,11 @@ import * as WindowIcons from "./subComponents";
 export type WindowIconsAvailable = keyof typeof WindowIcons;
 
 type WindowIconProps = IconSvgProps & {
-	name: WindowIconsAvailable;
-	ref?: Ref<SVGSVGElement>;
+    name: WindowIconsAvailable;
+    ref?: Ref<SVGSVGElement>;
 };
 
 export const WindowIcon = ({ name, ...svgProps }: WindowIconProps) => {
-	const IconComponent = WindowIcons?.[name];
-	return <IconComponent {...svgProps} />;
+    const IconComponent = WindowIcons?.[name];
+    return <IconComponent {...svgProps} />;
 };

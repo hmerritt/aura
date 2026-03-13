@@ -17,5 +17,5 @@ global.feature = vi.fn();
 HTMLCanvasElement.prototype.getContext = vi.fn();
 
 afterEach(() => {
-	cleanup();
+    cleanup();
 });

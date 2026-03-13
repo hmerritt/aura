@@ -1,9 +1,9 @@
 export interface ICountStore {
-	current: number | string;
+    current: number | string;
 }
 
 export const countStore: ICountStore = {
-	current: 0
+    current: 0
 };
 
 export default countStore;

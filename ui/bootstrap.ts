@@ -68,13 +68,15 @@ async function bootstrap() {
 }
 
 function readAuraVersionFromCargoManifest() {
-	const cargoManifest = fs.readFileSync(cargoManifestPath, "utf8");
-	const packageSection = cargoManifest.match(/^\[package\]([\s\S]*?)(?:^\[[^\]]+\]|\Z)/m);
-	const version = packageSection?.[1]?.match(/^\s*version\s*=\s*"([^"]+)"\s*$/m)?.[1];
+    const cargoManifest = fs.readFileSync(cargoManifestPath, "utf8");
+    const packageSection = cargoManifest.match(
+        /^\[package\]([\s\S]*?)(?:^\[[^\]]+\]|\Z)/m
+    );
+    const version = packageSection?.[1]?.match(/^\s*version\s*=\s*"([^"]+)"\s*$/m)?.[1];
 
-	if (!version) {
-		throw new Error(`Unable to read aura version from ${cargoManifestPath}`);
-	}
+    if (!version) {
+        throw new Error(`Unable to read aura version from ${cargoManifestPath}`);
+    }
 
-	return version;
+    return version;
 }

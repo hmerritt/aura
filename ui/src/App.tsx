@@ -6,13 +6,13 @@ import { HaloProvider } from "view/components/experimental/Halo";
 import { router } from "./router";
 
 function App() {
-	return (
-		<ActionFeedbackProvider>
-			<HaloProvider>
-				<RouterProvider router={router} defaultPreload="intent" context={{}} />
-			</HaloProvider>
-		</ActionFeedbackProvider>
-	);
+    return (
+        <ActionFeedbackProvider>
+            <HaloProvider>
+                <RouterProvider router={router} defaultPreload="intent" context={{}} />
+            </HaloProvider>
+        </ActionFeedbackProvider>
+    );
 }
 
 export default App;
