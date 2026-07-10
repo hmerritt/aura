@@ -1399,7 +1399,7 @@ mod tests {
     }
 
     #[test]
-    fn creates_missing_config_with_directory_source() {
+    fn creates_missing_config_with_rss_source() {
         let tmp = tempdir().unwrap();
         let config_path = tmp.path().join(".config").join("aura.hcl");
         let pictures = tmp.path().join("Pictures");
@@ -1412,6 +1412,18 @@ mod tests {
         let text = fs::read_to_string(&config_path).unwrap();
         let parsed = config::parse_from_str(&text, &config_path).unwrap();
         assert_eq!(parsed.image.sources.len(), 1);
+        match &parsed.image.sources[0] {
+            config::SourceConfig::Rss {
+                url,
+                max_items,
+                download_dir,
+            } => {
+                assert_eq!(url, "https://mrrtt.me/atv");
+                assert_eq!(*max_items, 1000);
+                assert!(download_dir.is_none());
+            }
+            _ => panic!("expected RSS source in generated config"),
+        }
     }
 
     #[test]

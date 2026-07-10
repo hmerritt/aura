@@ -1075,6 +1075,10 @@ image = {{
         assert!(raw.contains("color_space = \"unorm\""));
         assert!(raw.contains("resolution = 100"));
         assert!(raw.contains("updater = {"));
+        assert!(raw.contains(&format!(
+            "#{{ type = \"directory\", path = \"{}\" }}",
+            hcl_path(&pictures)
+        )));
         let cfg = parse_from_str(&raw, &tmp.path().join("aura.hcl")).unwrap();
         // `default_hcl` uses explicit template durations (3h / 2h), not parser fallback defaults.
         assert_eq!(cfg.image.timer.as_secs(), 10_800);
@@ -1085,13 +1089,16 @@ image = {{
         assert_eq!(cfg.image.sources.len(), 1);
 
         match &cfg.image.sources[0] {
-            SourceConfig::Directory {
-                path, recursive, ..
+            SourceConfig::Rss {
+                url,
+                max_items,
+                download_dir,
             } => {
-                assert_eq!(path, &pictures);
-                assert!(*recursive);
+                assert_eq!(url, "https://mrrtt.me/atv");
+                assert_eq!(*max_items, 1000);
+                assert!(download_dir.is_none());
             }
-            _ => panic!("expected directory source in generated config"),
+            _ => panic!("expected RSS source in generated config"),
         }
 
         let shader = cfg.shader.expect("shader config should exist");
