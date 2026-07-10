@@ -3,8 +3,8 @@ use crate::installer::SquirrelEvent;
 use crate::installer::StartupRegistrationStatus;
 use crate::version::{APP_NAME, BINARY_FILENAME};
 use anyhow::Context;
-use std::fs;
 use std::ffi::OsStr;
+use std::fs;
 use std::mem::size_of;
 use std::os::windows::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
@@ -644,7 +644,10 @@ mod tests {
 
         let metadata = build_uninstall_registry_metadata(&current_exe, "   ");
 
-        assert_eq!(metadata.display_icon, format!("{},0", current_exe.display()));
+        assert_eq!(
+            metadata.display_icon,
+            format!("{},0", current_exe.display())
+        );
         assert_eq!(metadata.display_version, DISPLAY_VERSION);
         assert_eq!(metadata.publisher, None);
     }

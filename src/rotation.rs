@@ -25,7 +25,7 @@ impl RotationManager {
             pool: HashMap::new(),
             remaining: VecDeque::new(),
             shown_current_cycle: HashSet::new(),
-            rng: SmallRng::from_entropy(),
+            rng: SmallRng::from_rng(&mut rand::rng()),
         }
     }
 

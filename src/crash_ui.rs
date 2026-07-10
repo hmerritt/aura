@@ -156,9 +156,7 @@ mod windows_impl {
 }
 
 #[cfg(windows)]
-pub use windows_impl::{
-    install_panic_hook, show_fatal_error_dialog, show_native_crash_dialog,
-};
+pub use windows_impl::{install_panic_hook, show_fatal_error_dialog, show_native_crash_dialog};
 
 #[cfg(not(windows))]
 pub fn install_panic_hook(_debug_requested: bool) {}

@@ -73,20 +73,20 @@ updater = {
 ### Prerequisites
 
 - Rust stable toolchain (`rustup`, `cargo`)
-- Rust nightly `nightly-2025-10-28-x86_64-pc-windows-msvc`
+- Rust nightly `nightly-2026-05-22-x86_64-pc-windows-msvc`
 - Windows development: MSVC toolchain/Visual Studio Build Tools (C++ build tools)
 - Linux/macOS: standard native build tools (`clang`/`gcc` and linker)
 
 ```sh
-rustup toolchain install nightly-2025-10-28-x86_64-pc-windows-msvc
+rustup toolchain install nightly-2026-05-22-x86_64-pc-windows-msvc
 ```
 
 ```sh
-rustup component add rustc-dev --toolchain nightly-2025-10-28-x86_64-pc-windows-msvc
+rustup component add rustc-dev --toolchain nightly-2026-05-22-x86_64-pc-windows-msvc
 ```
 
 ```sh
-rustup component add rust-src --toolchain nightly-2025-10-28-x86_64-pc-windows-msvc
+rustup component add rust-src --toolchain nightly-2026-05-22-x86_64-pc-windows-msvc
 ```
 
 ### Commands

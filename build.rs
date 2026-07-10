@@ -15,7 +15,7 @@ const RELOAD_SETTINGS_ICON_FALLBACK_RESOURCE_ID: u16 = 305;
 const SETTINGS_ICON_FALLBACK_RESOURCE_ID: u16 = 301;
 const EXIT_ICON_FALLBACK_RESOURCE_ID: u16 = 302;
 // Keep this in sync with shaders/rust-toolchain.toml and CI workflows.
-const RUSTGPU_TOOLCHAIN: &str = "nightly-2025-10-28";
+const RUSTGPU_TOOLCHAIN: &str = "nightly-2026-05-22";
 
 fn main() {
     println!("cargo:rerun-if-changed=assets/tray.png");

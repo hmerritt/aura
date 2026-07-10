@@ -91,7 +91,9 @@ impl WgpuRuntime {
         shader_config: ShaderConfig,
         desktop_rect: DesktopRect,
     ) -> Result<Self> {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::default());
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_with_display_handle(
+            Box::new(window.clone()),
+        ));
         let surface = instance
             .create_surface(window.clone())
             .map_err(|error| anyhow!("failed to create wgpu surface: {error}"))?;
@@ -100,17 +102,16 @@ impl WgpuRuntime {
             power_preference: SHADER_POWER_PREFERENCE,
             force_fallback_adapter: false,
             compatible_surface: Some(&surface),
+            apply_limit_buckets: false,
         }))
-        .ok_or_else(|| anyhow!("failed to find a compatible GPU adapter"))?;
+        .context("failed to find a compatible GPU adapter")?;
 
-        let (device, queue) = pollster::block_on(adapter.request_device(
-            &wgpu::DeviceDescriptor {
-                label: Some("aura-shader-device"),
-                required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::default(),
-            },
-            None,
-        ))
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            label: Some("aura-shader-device"),
+            required_features: wgpu::Features::empty(),
+            required_limits: wgpu::Limits::default(),
+            ..Default::default()
+        }))
         .context("failed to request GPU device")?;
 
         let caps = surface.get_capabilities(&adapter);
@@ -144,6 +145,7 @@ impl WgpuRuntime {
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format,
+            color_space: wgpu::SurfaceColorSpace::Auto,
             width: output_size.width,
             height: output_size.height,
             present_mode: wgpu::PresentMode::Fifo,
@@ -239,9 +241,10 @@ impl WgpuRuntime {
                 power_preference: SHADER_POWER_PREFERENCE,
                 force_fallback_adapter: false,
                 compatible_surface: Some(&self.surface),
+                apply_limit_buckets: false,
             },
         ))
-        .ok_or_else(|| anyhow!("failed to find a compatible GPU adapter"))?;
+        .context("failed to find a compatible GPU adapter")?;
 
         let caps = self.surface.get_capabilities(&adapter);
         if caps.formats.is_empty() {
@@ -273,6 +276,7 @@ impl WgpuRuntime {
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format,
+            color_space: wgpu::SurfaceColorSpace::Auto,
             width: output_size.width,
             height: output_size.height,
             present_mode: self.config.present_mode,
@@ -385,16 +389,17 @@ impl WgpuRuntime {
 
     pub fn render(&mut self, mouse: [f32; 2]) -> Result<()> {
         let output = match self.surface.get_current_texture() {
-            Ok(output) => output,
-            Err(wgpu::SurfaceError::Lost) | Err(wgpu::SurfaceError::Outdated) => {
+            wgpu::CurrentSurfaceTexture::Success(output)
+            | wgpu::CurrentSurfaceTexture::Suboptimal(output) => output,
+            wgpu::CurrentSurfaceTexture::Lost | wgpu::CurrentSurfaceTexture::Outdated => {
                 self.surface.configure(&self.device, &self.config);
                 return Ok(());
             }
-            Err(wgpu::SurfaceError::Timeout) => {
+            wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
                 return Ok(());
             }
-            Err(wgpu::SurfaceError::OutOfMemory) => {
-                bail!("GPU surface out of memory");
+            wgpu::CurrentSurfaceTexture::Validation => {
+                bail!("GPU surface validation failed");
             }
         };
 
@@ -431,6 +436,7 @@ impl WgpuRuntime {
                 label: Some("aura-shader-scene-pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &self.internal_target.view,
+                    depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
@@ -440,6 +446,7 @@ impl WgpuRuntime {
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,
+                multiview_mask: None,
             });
             pass.set_pipeline(&self.scene_pipeline);
             pass.set_bind_group(0, &self.scene_bind_group, &[]);
@@ -451,6 +458,7 @@ impl WgpuRuntime {
                 label: Some("aura-shader-composite-pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &view,
+                    depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
@@ -460,6 +468,7 @@ impl WgpuRuntime {
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,
+                multiview_mask: None,
             });
             pass.set_pipeline(&self.composite_pipeline);
             pass.set_bind_group(0, &self.internal_target.bind_group, &[]);
@@ -467,7 +476,7 @@ impl WgpuRuntime {
         }
 
         self.queue.submit([encoder.finish()]);
-        output.present();
+        self.queue.present(output);
         Ok(())
     }
 
@@ -548,8 +557,8 @@ fn create_scene_pipeline(
     });
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("aura-shader-pipeline-layout"),
-        bind_group_layouts: &[&bind_group_layout],
-        push_constant_ranges: &[],
+        bind_group_layouts: &[Some(&bind_group_layout)],
+        immediate_size: 0,
     });
 
     let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -557,13 +566,13 @@ fn create_scene_pipeline(
         layout: Some(&pipeline_layout),
         vertex: wgpu::VertexState {
             module: &shader,
-            entry_point: "vs_main",
+            entry_point: Some("vs_main"),
             buffers: &[],
             compilation_options: wgpu::PipelineCompilationOptions::default(),
         },
         fragment: Some(wgpu::FragmentState {
             module: &shader,
-            entry_point: "fs_main",
+            entry_point: Some("fs_main"),
             targets: &[Some(wgpu::ColorTargetState {
                 format: target_format,
                 blend: Some(wgpu::BlendState::REPLACE),
@@ -582,7 +591,8 @@ fn create_scene_pipeline(
         },
         depth_stencil: None,
         multisample: wgpu::MultisampleState::default(),
-        multiview: None,
+        multiview_mask: None,
+        cache: None,
     });
 
     Ok((uniform_buffer, bind_group, pipeline))
@@ -617,7 +627,7 @@ fn create_composite_sampler(device: &wgpu::Device) -> wgpu::Sampler {
         label: Some("aura-composite-sampler"),
         mag_filter: wgpu::FilterMode::Linear,
         min_filter: wgpu::FilterMode::Linear,
-        mipmap_filter: wgpu::FilterMode::Nearest,
+        mipmap_filter: wgpu::MipmapFilterMode::Nearest,
         address_mode_u: wgpu::AddressMode::ClampToEdge,
         address_mode_v: wgpu::AddressMode::ClampToEdge,
         address_mode_w: wgpu::AddressMode::ClampToEdge,
@@ -636,21 +646,21 @@ fn create_composite_pipeline(
     });
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("aura-composite-pipeline-layout"),
-        bind_group_layouts: &[bind_group_layout],
-        push_constant_ranges: &[],
+        bind_group_layouts: &[Some(bind_group_layout)],
+        immediate_size: 0,
     });
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("aura-composite-pipeline"),
         layout: Some(&pipeline_layout),
         vertex: wgpu::VertexState {
             module: &shader,
-            entry_point: "vs_main",
+            entry_point: Some("vs_main"),
             buffers: &[],
             compilation_options: wgpu::PipelineCompilationOptions::default(),
         },
         fragment: Some(wgpu::FragmentState {
             module: &shader,
-            entry_point: "fs_main",
+            entry_point: Some("fs_main"),
             targets: &[Some(wgpu::ColorTargetState {
                 format: target_format,
                 blend: Some(wgpu::BlendState::REPLACE),
@@ -669,7 +679,8 @@ fn create_composite_pipeline(
         },
         depth_stencil: None,
         multisample: wgpu::MultisampleState::default(),
-        multiview: None,
+        multiview_mask: None,
+        cache: None,
     })
 }
 
@@ -802,7 +813,7 @@ fn bytes_to_megabytes(bytes: u64) -> f64 {
 }
 
 fn poll_device_for_shutdown(device: &wgpu::Device) {
-    let _ = device.poll(wgpu::Maintain::Wait);
+    let _ = device.poll(wgpu::PollType::wait_indefinitely());
 }
 
 #[cfg(test)]

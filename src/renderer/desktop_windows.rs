@@ -2,7 +2,8 @@ use crate::config::ShaderDesktopScope;
 use crate::errors::Result;
 use anyhow::{bail, Context};
 use std::ptr;
-use windows_sys::Win32::Foundation::{GetLastError, SetLastError, BOOL, HWND, LPARAM, POINT};
+use windows_sys::core::BOOL;
+use windows_sys::Win32::Foundation::{GetLastError, SetLastError, HWND, LPARAM, POINT};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     EnumWindows, FindWindowExW, FindWindowW, GetCursorPos, GetSystemMetrics, SendMessageTimeoutW,
     SetParent, SetWindowPos, ShowWindow, SM_CXSCREEN, SM_CXVIRTUALSCREEN, SM_CYSCREEN,
