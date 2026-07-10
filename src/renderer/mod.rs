@@ -6,19 +6,29 @@ pub enum RendererEvent {
     Stopped,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct DesktopRect {
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+}
+
 #[cfg(windows)]
 mod desktop_windows;
 #[cfg(windows)]
 mod engine;
-#[cfg(all(test, windows))]
+#[cfg(all(test, any(windows, target_os = "macos")))]
 mod golden_tests;
-#[cfg(any(windows, target_os = "linux"))]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 pub(crate) mod precompiled;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 mod wgpu_runtime;
 
 #[cfg(target_os = "linux")]
 mod linux;
+#[cfg(target_os = "macos")]
+pub(crate) mod macos;
 
 #[cfg(windows)]
 pub use engine::ShaderRenderer;
@@ -26,14 +36,17 @@ pub use engine::ShaderRenderer;
 #[cfg(target_os = "linux")]
 pub use linux::ShaderRenderer;
 
-#[cfg(not(any(windows, target_os = "linux")))]
+#[cfg(target_os = "macos")]
+pub use macos::ShaderRenderer;
+
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 use crate::config::ShaderConfig;
-#[cfg(not(any(windows, target_os = "linux")))]
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 use crate::errors::Result;
-#[cfg(not(any(windows, target_os = "linux")))]
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 pub struct ShaderRenderer;
 
-#[cfg(not(any(windows, target_os = "linux")))]
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 impl ShaderRenderer {
     pub fn start(_config: ShaderConfig) -> Result<Self> {
         anyhow::bail!("shader renderer is only supported on Windows")

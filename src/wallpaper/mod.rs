@@ -3,6 +3,8 @@ use std::path::Path;
 
 #[cfg(target_os = "linux")]
 mod linux;
+#[cfg(target_os = "macos")]
+mod macos;
 #[cfg(windows)]
 mod windows;
 
@@ -20,17 +22,22 @@ pub fn default_backend() -> Box<dyn WallpaperBackend> {
     Box::new(linux::LinuxWallpaperBackend)
 }
 
-#[cfg(not(any(windows, target_os = "linux")))]
+#[cfg(target_os = "macos")]
+pub fn default_backend() -> Box<dyn WallpaperBackend> {
+    Box::new(macos::MacWallpaperBackend)
+}
+
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 struct UnsupportedWallpaperBackend;
 
-#[cfg(not(any(windows, target_os = "linux")))]
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 impl WallpaperBackend for UnsupportedWallpaperBackend {
     fn set_wallpaper(&self, _path: &Path) -> Result<()> {
         anyhow::bail!("wallpaper updates require Windows, GNOME, or KDE Plasma")
     }
 }
 
-#[cfg(not(any(windows, target_os = "linux")))]
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 pub fn default_backend() -> Box<dyn WallpaperBackend> {
     Box::new(UnsupportedWallpaperBackend)
 }

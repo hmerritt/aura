@@ -145,7 +145,14 @@ struct GoldenGpu {
 impl GoldenGpu {
     fn new() -> Result<Self> {
         let mut descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
-        descriptor.backends = wgpu::Backends::DX12;
+        #[cfg(windows)]
+        {
+            descriptor.backends = wgpu::Backends::DX12;
+        }
+        #[cfg(target_os = "macos")]
+        {
+            descriptor.backends = wgpu::Backends::METAL;
+        }
         let instance = wgpu::Instance::new(descriptor);
 
         let fallback_options = wgpu::RequestAdapterOptions {
@@ -158,13 +165,13 @@ impl GoldenGpu {
             Ok(adapter) => adapter,
             Err(fallback_error) => {
                 eprintln!(
-                    "D3D12 fallback adapter unavailable ({fallback_error}); trying a hardware adapter"
+                    "fallback GPU adapter unavailable ({fallback_error}); trying a hardware adapter"
                 );
                 pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
                     force_fallback_adapter: false,
                     ..fallback_options
                 }))
-                .context("no usable D3D12 adapter is available for shader golden tests")?
+                .context("no usable GPU adapter is available for shader golden tests")?
             }
         };
         eprintln!("shader golden adapter: {:?}", adapter.get_info());
@@ -797,7 +804,7 @@ fn golden_manifest_covers_every_shader_and_case() -> Result<()> {
 }
 
 #[test]
-#[ignore = "requires a Windows D3D12 adapter; run explicitly in Windows CI"]
+#[ignore = "requires a native GPU adapter; run explicitly in platform CI"]
 fn portable_shaders_match_legacy_goldens() -> Result<()> {
     let manifest = load_manifest()?;
     validate_manifest(&manifest, true)?;

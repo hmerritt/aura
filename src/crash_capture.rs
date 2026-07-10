@@ -23,13 +23,13 @@ const CRASH_DUMP_FILENAME: &str = "aura-crash.dmp";
 #[cfg(windows)]
 const CRASH_TEXT_FILENAME: &str = "aura-crash.txt";
 
-#[cfg(not(any(windows, target_os = "linux")))]
+#[cfg(not(any(windows, unix)))]
 pub fn install() -> Result<()> {
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
-mod linux_impl {
+#[cfg(unix)]
+mod unix_impl {
     use super::*;
     use anyhow::Context;
     use std::fs::{self, OpenOptions};
@@ -47,7 +47,7 @@ mod linux_impl {
 
         let state_dir = dirs::state_dir()
             .or_else(dirs::data_local_dir)
-            .context("failed to resolve Linux state directory")?
+            .context("failed to resolve Unix state directory")?
             .join("aura");
         fs::create_dir_all(&state_dir)
             .with_context(|| format!("failed to create crash directory {}", state_dir.display()))?;
@@ -139,8 +139,8 @@ mod linux_impl {
     }
 }
 
-#[cfg(target_os = "linux")]
-pub use linux_impl::install;
+#[cfg(unix)]
+pub use unix_impl::install;
 
 #[cfg(windows)]
 mod windows_impl {

@@ -158,8 +158,57 @@ jobs:
           path: release-assets/aura-linux-${{ matrix.arch }}.tar.gz
           if-no-files-found: error
 
+  build_macos_arm64:
+    needs: validate
+    runs-on: macos-14
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "14.0"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Verify native Apple Silicon runner
+        run: test "$(uname -m)" = arm64
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Test
+        run: cargo test --locked --all-targets --target aarch64-apple-darwin
+
+      - name: Test shader golden images with Metal
+        env:
+          WGPU_BACKEND: metal
+        run: cargo test --locked --target aarch64-apple-darwin renderer::golden_tests::portable_shaders_match_legacy_goldens -- --ignored --exact --test-threads=1
+
+      - name: Build release
+        run: cargo build --release --locked --target aarch64-apple-darwin
+
+      - name: Validate and package release
+        run: |
+          test "$(lipo -archs target/aarch64-apple-darwin/release/aura)" = arm64
+          target/aarch64-apple-darwin/release/aura --version | grep -F "Version ${{ needs.validate.outputs.version }}"
+          bash scripts/macos/package-release.sh \
+            --version "${{ needs.validate.outputs.version }}" \
+            --binary target/aarch64-apple-darwin/release/aura \
+            --output release-assets
+
+      - name: Upload macOS assets
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-macos-arm64
+          path: |
+            release-assets/aura-macos-arm64.dmg
+            release-assets/aura-macos-arm64.tar.gz
+          if-no-files-found: error
+
   publish_draft:
-    needs: [validate, build_windows, build_linux]
+    needs: [validate, build_windows, build_linux, build_macos_arm64]
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout

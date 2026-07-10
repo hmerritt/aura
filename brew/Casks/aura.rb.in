@@ -1,0 +1,31 @@
+cask "aura" do
+  version "@VERSION@"
+  sha256 "@DMG_SHA256@"
+
+  url "@DMG_URL@",
+      verified: "github.com/hmerritt/aura/"
+  name "Aura"
+  desc "Wallpaper manager with image rotation and live Metal shaders"
+  homepage "https://github.com/hmerritt/aura"
+
+  depends_on arch: :arm64
+  depends_on macos: ">= :sonoma"
+
+  app "Aura.app"
+
+  uninstall quit: "io.github.hmerritt.Aura"
+
+  zap trash: [
+    "~/.cache/aura",
+    "~/.config/aura.hcl",
+    "~/.local/share/aura",
+    "~/.local/state/aura",
+    "~/Library/Application Support/aura",
+  ]
+
+  caveats <<~EOS
+    Aura is ad-hoc signed, not notarized. On first launch, macOS may require
+    approval in System Settings > Privacy & Security. Updates are managed by
+    Homebrew; use `brew upgrade --cask aura`.
+  EOS
+end

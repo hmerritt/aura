@@ -11,6 +11,10 @@ mod installer;
 #[cfg(target_os = "linux")]
 mod linux_desktop;
 mod logging;
+#[cfg(target_os = "macos")]
+mod macos_app;
+#[cfg(any(target_os = "macos", test))]
+mod macos_support;
 mod renderer;
 mod rotation;
 mod scheduler;
@@ -34,6 +38,7 @@ use crate::tray::{format_config_duration, SessionStats, TrayEvent};
 use crate::updater::{RestartContext, UpdateTrigger, UpdaterEvent, UpdaterStatus};
 use anyhow::Context;
 use std::collections::HashSet;
+#[cfg(not(target_os = "macos"))]
 use std::env;
 use std::fs;
 use std::io::Write;
@@ -66,6 +71,7 @@ struct CliOptions {
     squirrel_event: Option<SquirrelEvent>,
 }
 
+#[cfg(not(target_os = "macos"))]
 #[tokio::main]
 async fn main() {
     let args: Vec<String> = env::args().skip(1).collect();
@@ -106,6 +112,11 @@ async fn main() {
     }
 }
 
+#[cfg(target_os = "macos")]
+fn main() {
+    macos_app::run();
+}
+
 async fn run(args: Vec<String>, debug_requested: bool) -> Result<()> {
     write_startup_stage(debug_requested, "parse_cli_options");
     let options = parse_cli_options(&args)?;
@@ -129,6 +140,22 @@ async fn run(args: Vec<String>, debug_requested: bool) -> Result<()> {
         return Ok(());
     }
 
+    let mut _single_instance_guard: Option<tray::SingleInstanceGuard> = None;
+    #[cfg(target_os = "macos")]
+    {
+        _single_instance_guard = match tray::try_acquire_single_instance()? {
+            Some(guard) => Some(guard),
+            None => {
+                let _ = writeln!(
+                    std::io::stderr(),
+                    "another Aura instance is already running; activating it"
+                );
+                macos_app::activate_existing_instance();
+                return Ok(());
+            }
+        };
+    }
+
     let config_path = options.config_path.clone();
     write_startup_stage(debug_requested, "ensure_config_exists");
     let created = ensure_config_exists(&config_path)?;
@@ -149,6 +176,9 @@ async fn run(args: Vec<String>, debug_requested: bool) -> Result<()> {
         }
         Ok(StartupRegistrationStatus::RegisteredNow) => {
             info!("startup registration was missing and has been restored");
+        }
+        Ok(StartupRegistrationStatus::ApprovalRequired) => {
+            warn!("login startup requires approval in System Settings");
         }
         Err(error) => {
             warn!(error = %error, "failed to enforce startup registration");
@@ -212,7 +242,6 @@ async fn run(args: Vec<String>, debug_requested: bool) -> Result<()> {
     session_stats.set_total_images(local_images_count + remote_images_count);
 
     let (tray_event_tx, mut tray_event_rx) = tokio::sync::mpsc::unbounded_channel::<TrayEvent>();
-    let mut _single_instance_guard: Option<tray::SingleInstanceGuard> = None;
     let mut _tray_controller: Option<tray::TrayController> = None;
     #[cfg(windows)]
     if options.tray_enabled {
@@ -233,6 +262,21 @@ async fn run(args: Vec<String>, debug_requested: bool) -> Result<()> {
             .await?,
         );
         info!("tray mode enabled");
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        if options.tray_enabled {
+            _tray_controller = Some(
+                tray::spawn(
+                    config_path.clone(),
+                    tray_event_tx.clone(),
+                    session_stats.clone(),
+                )
+                .await?,
+            );
+            info!("macOS menu bar mode enabled");
+        }
     }
 
     #[cfg(target_os = "linux")]
@@ -259,20 +303,28 @@ async fn run(args: Vec<String>, debug_requested: bool) -> Result<()> {
 
     let backend = wallpaper::default_backend();
     let mut last_image_id = persisted_state.last_image_id.clone();
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     let mut initial_image_applied = false;
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     let initial_image_applied = false;
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     if config.renderer == RendererMode::Shader {
-        if let Some(next_id) =
-            try_switch_once(&mut rotation, cache.as_ref(), &*backend, &config).await?
-        {
-            session_stats.inc_images_shown();
-            last_image_id = Some(next_id);
-            initial_image_applied = true;
-            persist_state(&state_store, &rotation, last_image_id.clone())?;
-            info!("prepared a persistent image fallback beneath the Linux shader");
+        match try_switch_once(&mut rotation, cache.as_ref(), &*backend, &config).await? {
+            Some(next_id) => {
+                session_stats.inc_images_shown();
+                last_image_id = Some(next_id);
+                initial_image_applied = true;
+                persist_state(&state_store, &rotation, last_image_id.clone())?;
+                info!("prepared a persistent image fallback beneath the live shader");
+            }
+            None => {
+                #[cfg(target_os = "macos")]
+                return Err(anyhow::anyhow!(
+                    "macOS shader mode requires at least one image for its crash-safe fallback"
+                ));
+                #[cfg(target_os = "linux")]
+                warn!("no persistent image fallback was available beneath the Linux shader");
+            }
         }
     }
 

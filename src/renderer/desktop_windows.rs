@@ -1,5 +1,6 @@
 use crate::config::ShaderDesktopScope;
 use crate::errors::Result;
+use crate::renderer::DesktopRect;
 use anyhow::{bail, Context};
 use std::ptr;
 use windows_sys::core::BOOL;
@@ -10,14 +11,6 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SWP_NOACTIVATE, SWP_NOOWNERZORDER,
     SWP_NOZORDER, SW_HIDE, SW_SHOW,
 };
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct DesktopRect {
-    pub x: i32,
-    pub y: i32,
-    pub width: i32,
-    pub height: i32,
-}
 
 pub fn attach_window_to_desktop(hwnd: HWND) -> Result<()> {
     unsafe {

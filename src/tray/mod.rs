@@ -186,6 +186,8 @@ pub(crate) fn format_config_duration(duration: Duration) -> String {
 
 #[cfg(target_os = "linux")]
 mod linux;
+#[cfg(target_os = "macos")]
+mod macos;
 #[cfg(windows)]
 mod windows;
 
@@ -206,32 +208,37 @@ pub async fn spawn(
 #[cfg(target_os = "linux")]
 pub use linux::{open_settings, spawn, TrayController};
 
-#[cfg(not(any(windows, target_os = "linux")))]
+#[cfg(target_os = "macos")]
+pub use macos::{
+    open_settings, spawn, try_acquire_single_instance, SingleInstanceGuard, TrayController,
+};
+
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 pub struct TrayController;
 
-#[cfg(not(any(windows, target_os = "linux")))]
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 impl TrayController {
     pub fn new() -> Self {
         Self
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 pub struct SingleInstanceGuard;
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 use crate::errors::Result;
-#[cfg(not(any(windows, target_os = "linux")))]
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 use std::path::PathBuf;
-#[cfg(not(any(windows, target_os = "linux")))]
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 use tokio::sync::mpsc::UnboundedSender;
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn try_acquire_single_instance() -> Result<Option<SingleInstanceGuard>> {
     Ok(Some(SingleInstanceGuard))
 }
 
-#[cfg(not(any(windows, target_os = "linux")))]
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 pub async fn spawn(
     _config_path: PathBuf,
     _event_tx: UnboundedSender<TrayEvent>,
@@ -240,7 +247,7 @@ pub async fn spawn(
     Ok(TrayController::new())
 }
 
-#[cfg(not(any(windows, target_os = "linux")))]
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 pub fn open_settings(_path: &std::path::Path) -> Result<()> {
     anyhow::bail!("opening settings is unsupported on this desktop")
 }

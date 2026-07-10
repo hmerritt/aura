@@ -1,0 +1,27 @@
+class Aura < Formula
+  desc "Wallpaper manager with image rotation and live Metal shaders"
+  homepage "https://github.com/hmerritt/aura"
+  url "@TARBALL_URL@"
+  version "@VERSION@"
+  sha256 "@TARBALL_SHA256@"
+  license "MIT"
+
+  depends_on arch: :arm64
+  depends_on macos: :sonoma
+
+  def install
+    bin.install "Aura.app/Contents/MacOS/aura"
+  end
+
+  service do
+    run [opt_bin/"aura"]
+    keep_alive true
+    process_type :interactive
+    log_path var/"log/aura.log"
+    error_log_path var/"log/aura.log"
+  end
+
+  test do
+    assert_match "Version #{version}", shell_output("#{bin}/aura --version")
+  end
+end
