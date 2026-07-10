@@ -28,6 +28,13 @@ def require_text(path: Path, fragments: tuple[str, ...]) -> None:
             raise ValueError(f"{path} is missing required contract text {fragment!r}")
 
 
+def forbid_text(path: Path, fragments: tuple[str, ...]) -> None:
+    source = path.read_text(encoding="utf-8")
+    for fragment in fragments:
+        if fragment in source:
+            raise ValueError(f"{path} contains forbidden contract text {fragment!r}")
+
+
 def main() -> None:
     gnome = load_json(GNOME / "metadata.json")
     if gnome.get("uuid") != "aura@hmerritt.github.io":
@@ -55,6 +62,12 @@ def main() -> None:
             "SnapshotChanged",
             "ReportRendererStatus",
             "Shell.GLSLEffect",
+            "const shaderEffectClasses = new Map();",
+            "function getAuraShaderEffectClass(core)",
+            "GTypeName: typeName",
+            "${shaderCore}",
+            "const ShaderEffect = getAuraShaderEffectClass(shader.gnomeGlsl);",
+            "this._shaderEffect = new ShaderEffect(shader.colorSpace);",
             "'first-frame': {}",
             "'paint-error': {param_types: [GObject.TYPE_STRING]}",
             "vfunc_paint_target(...args)",
@@ -66,6 +79,10 @@ def main() -> None:
             "const AuraIndicator = GObject.registerClass(",
             "class AuraIndicator extends PanelMenu.Button",
         ),
+    )
+    forbid_text(
+        GNOME / "extension.js",
+        ("${this._core}", "new AuraShaderEffect(shader.gnomeGlsl"),
     )
     require_text(
         PLASMA / "contents" / "ui" / "main.qml",

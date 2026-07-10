@@ -34,34 +34,45 @@ const AuraXml = `<node>
 
 const AuraProxy = Gio.DBusProxy.makeProxyWrapper(AuraXml);
 
-const AuraShaderEffect = GObject.registerClass({
-    Signals: {
-        'first-frame': {},
-        'paint-error': {param_types: [GObject.TYPE_STRING]},
-    },
-},
-class AuraShaderEffect extends Shell.GLSLEffect {
-    _init(core, colorSpace) {
-        super._init();
-        this._core = core;
-        this._colorSpace = colorSpace;
-        this._time = this.get_uniform_location('aura_time_seconds');
-        this._frame = this.get_uniform_location('aura_frame_index');
-        this._mouseEnabled = this.get_uniform_location('aura_mouse_enabled');
-        this._resolution = this.get_uniform_location('aura_resolution');
-        this._mouse = this.get_uniform_location('aura_mouse');
-        this._srgb = this.get_uniform_location('aura_color_space_srgb');
-    }
+const shaderEffectClasses = new Map();
+let shaderEffectTypeSerial = 0;
 
-    vfunc_build_pipeline() {
-        const declarations = `
+function getAuraShaderEffectClass(core) {
+    if (typeof core !== 'string' || core.trim() === '')
+        throw new Error('GNOME shader source must be a non-empty string');
+    const cached = shaderEffectClasses.get(core);
+    if (cached)
+        return cached;
+
+    const shaderCore = core;
+    const typeName = `AuraShaderEffect${++shaderEffectTypeSerial}`;
+    const AuraShaderEffect = GObject.registerClass({
+        GTypeName: typeName,
+        Signals: {
+            'first-frame': {},
+            'paint-error': {param_types: [GObject.TYPE_STRING]},
+        },
+    }, class AuraShaderEffect extends Shell.GLSLEffect {
+        _init(colorSpace) {
+            super._init();
+            this._colorSpace = colorSpace;
+            this._time = this.get_uniform_location('aura_time_seconds');
+            this._frame = this.get_uniform_location('aura_frame_index');
+            this._mouseEnabled = this.get_uniform_location('aura_mouse_enabled');
+            this._resolution = this.get_uniform_location('aura_resolution');
+            this._mouse = this.get_uniform_location('aura_mouse');
+            this._srgb = this.get_uniform_location('aura_color_space_srgb');
+        }
+
+        vfunc_build_pipeline() {
+            const declarations = `
 uniform float aura_time_seconds;
 uniform float aura_frame_index;
 uniform float aura_mouse_enabled;
 uniform vec4 aura_resolution;
 uniform vec4 aura_mouse;
 uniform float aura_color_space_srgb;
-${this._core}
+${shaderCore}
 vec3 aura_linear_to_srgb(vec3 value) {
     vec3 low = value * 12.92;
     vec3 high = 1.055 * pow(max(value, vec3(0.0)), vec3(1.0 / 2.4)) - vec3(0.055);
@@ -71,7 +82,7 @@ vec3 aura_linear_to_srgb(vec3 value) {
         value.b <= 0.0031308 ? low.b : high.b
     );
 }`;
-        const code = `
+            const code = `
 vec2 aura_size = max(aura_resolution.xy, vec2(1.0));
 vec2 aura_coord = floor(cogl_tex_coord_in[0].xy * aura_size) + vec2(0.5);
 AuraUniforms aura_values = AuraUniforms(
@@ -86,37 +97,40 @@ vec4 aura_result = aura_main(aura_coord, aura_values);
 if (aura_color_space_srgb > 0.5)
     aura_result.rgb = aura_linear_to_srgb(aura_result.rgb);
 cogl_color_out = aura_result;`;
-        this.add_glsl_snippet(Cogl.SnippetHook.FRAGMENT, declarations, code, true);
-    }
+            this.add_glsl_snippet(Cogl.SnippetHook.FRAGMENT, declarations, code, true);
+        }
 
-    vfunc_paint_target(...args) {
-        let result;
-        try {
-            result = super.vfunc_paint_target(...args);
-        } catch (error) {
-            if (!this._paintFailed) {
-                this._paintFailed = true;
-                this.emit('paint-error', error.message ?? String(error));
+        vfunc_paint_target(...args) {
+            let result;
+            try {
+                result = super.vfunc_paint_target(...args);
+            } catch (error) {
+                if (!this._paintFailed) {
+                    this._paintFailed = true;
+                    this.emit('paint-error', error.message ?? String(error));
+                }
+                return undefined;
             }
-            return undefined;
+            if (!this._paintedFirstFrame) {
+                this._paintedFirstFrame = true;
+                this.emit('first-frame');
+            }
+            return result;
         }
-        if (!this._paintedFirstFrame) {
-            this._paintedFirstFrame = true;
-            this.emit('first-frame');
-        }
-        return result;
-    }
 
-    update(timeSeconds, frame, mouseEnabled, width, height, mouseX, mouseY) {
-        this.set_uniform_float(this._time, 1, [timeSeconds]);
-        this.set_uniform_float(this._frame, 1, [frame]);
-        this.set_uniform_float(this._mouseEnabled, 1, [mouseEnabled ? 1 : 0]);
-        this.set_uniform_float(this._resolution, 4, [width, height, 0, 0]);
-        this.set_uniform_float(this._mouse, 4, [mouseX, mouseY, 0, 0]);
-        this.set_uniform_float(this._srgb, 1, [this._colorSpace === 'srgb' ? 1 : 0]);
-        this.queue_repaint();
-    }
-});
+        update(timeSeconds, frame, mouseEnabled, width, height, mouseX, mouseY) {
+            this.set_uniform_float(this._time, 1, [timeSeconds]);
+            this.set_uniform_float(this._frame, 1, [frame]);
+            this.set_uniform_float(this._mouseEnabled, 1, [mouseEnabled ? 1 : 0]);
+            this.set_uniform_float(this._resolution, 4, [width, height, 0, 0]);
+            this.set_uniform_float(this._mouse, 4, [mouseX, mouseY, 0, 0]);
+            this.set_uniform_float(this._srgb, 1, [this._colorSpace === 'srgb' ? 1 : 0]);
+            this.queue_repaint();
+        }
+    });
+    shaderEffectClasses.set(core, AuraShaderEffect);
+    return AuraShaderEffect;
+}
 
 const AuraIndicator = GObject.registerClass(
 class AuraIndicator extends PanelMenu.Button {
@@ -343,7 +357,8 @@ export default class AuraExtension extends Extension {
         this._shaderActor.set_position(monitor.x, monitor.y);
         this._shaderActor.set_size(monitor.width, monitor.height);
         Main.layoutManager._backgroundGroup.add_child(this._shaderActor);
-        this._shaderEffect = new AuraShaderEffect(shader.gnomeGlsl, shader.colorSpace);
+        const ShaderEffect = getAuraShaderEffectClass(shader.gnomeGlsl);
+        this._shaderEffect = new ShaderEffect(shader.colorSpace);
         this._shaderActor.add_effect_with_name('aura-shader', this._shaderEffect);
         this._rendererGeneration = snapshot.rendererGeneration;
         const generation = snapshot.rendererGeneration;
