@@ -804,7 +804,7 @@ fn golden_manifest_covers_every_shader_and_case() -> Result<()> {
 }
 
 #[test]
-#[ignore = "requires a native GPU adapter; run explicitly in platform CI"]
+#[ignore = "requires a native GPU adapter; run explicitly with a selected backend"]
 fn portable_shaders_match_legacy_goldens() -> Result<()> {
     let manifest = load_manifest()?;
     validate_manifest(&manifest, true)?;

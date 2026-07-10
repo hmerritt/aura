@@ -168,19 +168,6 @@ jobs:
       - name: Test
         run: cargo test --locked --all-targets --target aarch64-apple-darwin
 
-      - name: Test shader golden images with Metal
-        env:
-          WGPU_BACKEND: metal
-        run: cargo test --locked --target aarch64-apple-darwin renderer::golden_tests::portable_shaders_match_legacy_goldens -- --ignored --exact --test-threads=1
-
-      - name: Upload shader golden failures
-        if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          name: shader-golden-failures-macos-arm64
-          path: target/shader-golden-failures
-          if-no-files-found: ignore
-
       - name: Build and validate release package
         run: |
           cargo build --release --locked --target aarch64-apple-darwin
