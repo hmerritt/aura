@@ -14,6 +14,7 @@ import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 const AURA_BUS = 'io.github.hmerritt.Aura';
 const COMPANION_BUS = 'io.github.hmerritt.Aura.Gnome';
 const AURA_PATH = '/io/github/hmerritt/Aura';
+const SHADER_STARTUP_TIMEOUT_MS = 5000;
 
 const AuraXml = `<node>
   <interface name="io.github.hmerritt.Aura1">
@@ -33,7 +34,12 @@ const AuraXml = `<node>
 
 const AuraProxy = Gio.DBusProxy.makeProxyWrapper(AuraXml);
 
-const AuraShaderEffect = GObject.registerClass(
+const AuraShaderEffect = GObject.registerClass({
+    Signals: {
+        'first-frame': {},
+        'paint-error': {param_types: [GObject.TYPE_STRING]},
+    },
+},
 class AuraShaderEffect extends Shell.GLSLEffect {
     _init(core, colorSpace) {
         super._init();
@@ -79,8 +85,26 @@ AuraUniforms aura_values = AuraUniforms(
 vec4 aura_result = aura_main(aura_coord, aura_values);
 if (aura_color_space_srgb > 0.5)
     aura_result.rgb = aura_linear_to_srgb(aura_result.rgb);
-cogl_color_out = aura_result * cogl_color_in;`;
+cogl_color_out = aura_result;`;
         this.add_glsl_snippet(Cogl.SnippetHook.FRAGMENT, declarations, code, true);
+    }
+
+    vfunc_paint_target(...args) {
+        let result;
+        try {
+            result = super.vfunc_paint_target(...args);
+        } catch (error) {
+            if (!this._paintFailed) {
+                this._paintFailed = true;
+                this.emit('paint-error', error.message ?? String(error));
+            }
+            return undefined;
+        }
+        if (!this._paintedFirstFrame) {
+            this._paintedFirstFrame = true;
+            this.emit('first-frame');
+        }
+        return result;
     }
 
     update(timeSeconds, frame, mouseEnabled, width, height, mouseX, mouseY) {
@@ -144,6 +168,10 @@ export default class AuraExtension extends Extension {
         this._shaderEffect = null;
         this._rendererGeneration = 0;
         this._frameSource = 0;
+        this._shaderStartupSource = 0;
+        this._shaderFailureSource = 0;
+        this._shaderFirstFrameId = 0;
+        this._shaderPaintErrorId = 0;
         this._frame = 0;
         this._snapshot = null;
         this._indicator = null;
@@ -308,43 +336,124 @@ export default class AuraExtension extends Extension {
         const monitor = shader.scope === 'primary'
             ? Main.layoutManager.primaryMonitor
             : {x: 0, y: 0, width: global.stage.width, height: global.stage.height};
-        this._shaderActor = new St.Widget({reactive: false});
+        this._shaderActor = new St.Bin({
+            reactive: false,
+            style: 'background-color: white;',
+        });
         this._shaderActor.set_position(monitor.x, monitor.y);
         this._shaderActor.set_size(monitor.width, monitor.height);
         Main.layoutManager._backgroundGroup.add_child(this._shaderActor);
         this._shaderEffect = new AuraShaderEffect(shader.gnomeGlsl, shader.colorSpace);
         this._shaderActor.add_effect_with_name('aura-shader', this._shaderEffect);
         this._rendererGeneration = snapshot.rendererGeneration;
+        const generation = snapshot.rendererGeneration;
+        const effect = this._shaderEffect;
+        this._shaderFirstFrameId = effect.connect('first-frame', () => {
+            if (this._rendererGeneration !== generation || this._shaderEffect !== effect)
+                return;
+            if (this._shaderStartupSource)
+                GLib.source_remove(this._shaderStartupSource);
+            this._shaderStartupSource = 0;
+            if (this._shaderFirstFrameId)
+                effect.disconnect(this._shaderFirstFrameId);
+            this._shaderFirstFrameId = 0;
+            this._report(generation, 'ready', '');
+        });
+        this._shaderPaintErrorId = effect.connect('paint-error', (_effect, detail) => {
+            this._handleShaderPaintError(generation, `shader paint failed: ${detail}`);
+        });
         const internalWidth = Math.max(1, Math.round(monitor.width * shader.resolutionPercentage / 100));
         const internalHeight = Math.max(1, Math.round(monitor.height * shader.resolutionPercentage / 100));
         const intervalMs = Math.max(1, Math.round(1000 / Math.max(1, shader.targetFps)));
         this._frame = 0;
+        const updateFrame = () => {
+            if (this._rendererGeneration !== generation || this._shaderEffect !== effect)
+                return false;
+            try {
+                let mouseX = 0;
+                let mouseY = 0;
+                if (shader.mouseEnabled)
+                    [mouseX, mouseY] = global.get_pointer();
+                const scaleX = internalWidth / Math.max(1, monitor.width);
+                const scaleY = internalHeight / Math.max(1, monitor.height);
+                effect.update(
+                    Math.max(0, Date.now() - shader.phaseStartUnixMs) / 1000,
+                    this._frame++,
+                    shader.mouseEnabled,
+                    internalWidth,
+                    internalHeight,
+                    shader.mouseEnabled ? (mouseX - monitor.x) * scaleX : 0,
+                    shader.mouseEnabled ? (mouseY - monitor.y) * scaleY : 0
+                );
+                return true;
+            } catch (error) {
+                // The timeout callback will remove its own source on return.
+                this._frameSource = 0;
+                this._failShader(generation, `shader update failed: ${error.message ?? String(error)}`);
+                return false;
+            }
+        };
+        if (!updateFrame())
+            return;
         this._frameSource = GLib.timeout_add(GLib.PRIORITY_DEFAULT, intervalMs, () => {
-            if (!this._shaderEffect) return GLib.SOURCE_REMOVE;
-            const [mouseX, mouseY] = global.get_pointer();
-            const scaleX = internalWidth / Math.max(1, monitor.width);
-            const scaleY = internalHeight / Math.max(1, monitor.height);
-            this._shaderEffect.update(
-                Math.max(0, Date.now() - shader.phaseStartUnixMs) / 1000,
-                this._frame++,
-                shader.mouseEnabled,
-                internalWidth,
-                internalHeight,
-                shader.mouseEnabled ? (mouseX - monitor.x) * scaleX : 0,
-                shader.mouseEnabled ? (mouseY - monitor.y) * scaleY : 0
-            );
-            return GLib.SOURCE_CONTINUE;
+            return updateFrame() ? GLib.SOURCE_CONTINUE : GLib.SOURCE_REMOVE;
         });
-        this._report(snapshot.rendererGeneration, 'ready', '');
+        this._shaderStartupSource = GLib.timeout_add(
+            GLib.PRIORITY_DEFAULT,
+            SHADER_STARTUP_TIMEOUT_MS,
+            () => {
+                this._shaderStartupSource = 0;
+                this._failShader(generation, 'shader did not paint within 5 seconds');
+                return GLib.SOURCE_REMOVE;
+            }
+        );
     }
 
     _report(generation, status, detail) {
         this._proxy?.ReportRendererStatusRemote(generation, status, detail, () => {});
     }
 
+    _failShader(generation, detail) {
+        if (this._rendererGeneration !== generation || !this._shaderActor)
+            return;
+        console.error(`Aura: ${detail}`);
+        this._report(generation, 'error', detail);
+        this._destroyShader();
+    }
+
+    _handleShaderPaintError(generation, detail) {
+        if (this._rendererGeneration !== generation || !this._shaderActor ||
+            this._shaderFailureSource)
+            return;
+        console.error(`Aura: ${detail}`);
+        this._report(generation, 'error', detail);
+        if (this._frameSource)
+            GLib.source_remove(this._frameSource);
+        this._frameSource = 0;
+        if (this._shaderStartupSource)
+            GLib.source_remove(this._shaderStartupSource);
+        this._shaderStartupSource = 0;
+        this._shaderFailureSource = GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+            this._shaderFailureSource = 0;
+            if (this._rendererGeneration === generation)
+                this._destroyShader();
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
     _destroyShader() {
         if (this._frameSource) GLib.source_remove(this._frameSource);
+        if (this._shaderStartupSource) GLib.source_remove(this._shaderStartupSource);
+        if (this._shaderFailureSource) GLib.source_remove(this._shaderFailureSource);
         this._frameSource = 0;
+        this._shaderStartupSource = 0;
+        this._shaderFailureSource = 0;
+        if (this._shaderEffect && this._shaderFirstFrameId)
+            this._shaderEffect.disconnect(this._shaderFirstFrameId);
+        if (this._shaderEffect && this._shaderPaintErrorId)
+            this._shaderEffect.disconnect(this._shaderPaintErrorId);
+        this._shaderFirstFrameId = 0;
+        this._shaderPaintErrorId = 0;
         this._shaderActor?.destroy();
         this._shaderActor = null;
         this._shaderEffect = null;
