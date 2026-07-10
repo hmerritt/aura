@@ -60,6 +60,9 @@ def main() -> None:
         (
             "io.github.hmerritt.Aura1",
             "SnapshotChanged",
+            "CheckForUpdates",
+            "this._updates = this._action('Check for Updates'",
+            "`Updates: ${stats.appUpdateStatus",
             "ReportRendererStatus",
             "Shell.GLSLEffect",
             "const shaderEffectClasses = new Map();",

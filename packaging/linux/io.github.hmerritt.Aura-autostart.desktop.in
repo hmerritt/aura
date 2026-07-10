@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Aura
+Comment=Start Aura wallpaper manager
+Exec="@AURA_BIN@"
+Icon=io.github.hmerritt.Aura
+Terminal=false
+NoDisplay=true
+StartupNotify=false
+X-GNOME-Autostart-enabled=true

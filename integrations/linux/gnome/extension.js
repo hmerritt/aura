@@ -22,6 +22,7 @@ const AuraXml = `<node>
     <method name="NextBackground"/>
     <method name="ReloadSettings"/>
     <method name="OpenSettings"/>
+    <method name="CheckForUpdates"/>
     <method name="Exit"/>
     <method name="ReportRendererStatus">
       <arg type="t" direction="in"/>
@@ -147,6 +148,7 @@ class AuraIndicator extends PanelMenu.Button {
         this._next = this._action('Next Background', 'NextBackground');
         this._reload = this._action('Reload Settings', 'ReloadSettings');
         this._settings = this._action('Settings', 'OpenSettings');
+        this._updates = this._action('Check for Updates', 'CheckForUpdates');
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
         this._exit = this._action('Exit', 'Exit');
     }
@@ -169,6 +171,7 @@ class AuraIndicator extends PanelMenu.Button {
             `Remote refresh: ${stats.remoteUpdateTimer}`,
             `Images: ${stats.imageCount} · Shown: ${stats.shown} · Skipped: ${stats.skipped}`,
             `Running: ${stats.runningDuration}`,
+            `Updates: ${stats.appUpdateStatus ?? 'Unknown'}`,
         ].join('\n');
         this._next.setSensitive(snapshot.mode === 'image');
     }

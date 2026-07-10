@@ -1,12 +1,12 @@
 # Linux desktop runtime
 
-Aura supports GNOME 45+ and KDE Plasma 6+ on X11 and Wayland. The Linux build keeps the existing HCL configuration and CLI. Companion deployment and desktop package metadata are intentionally outside the runtime scope described here.
+Aura supports GNOME 45+ and KDE Plasma 6+ on X11 and Wayland. The Linux build keeps the existing HCL configuration and CLI. Managed installations deploy both companions, desktop metadata, and login startup through the [Linux installer](linux-installer.md).
 
 ## Runtime architecture
 
 The Rust process detects the desktop from `XDG_CURRENT_DESKTOP`, records the display protocol from `XDG_SESSION_TYPE`, and verifies the active shell on the session D-Bus. It then acquires `io.github.hmerritt.Aura`, including when `--no-tray` is used, and exports `io.github.hmerritt.Aura1` at `/io/github/hmerritt/Aura`.
 
-The version 1 JSON snapshot is the sole source of truth for the shell companions. It contains the current image or shader generation, canonical image URI, shader controls, desktop/session diagnostics, lease deadline, and live session statistics. D-Bus and tray actions are translated into the application's Tokio event channel.
+The version 1 JSON snapshot is the sole source of truth for the shell companions. It contains the current image or shader generation, canonical image URI, shader controls, desktop/session diagnostics, lease deadline, update status, and live session statistics. D-Bus and tray actions are translated into the application's Tokio event channel. `CheckForUpdates` and the installer-only `PrepareForUninstall` handoff are additive to the existing D-Bus interface so an older loaded companion can continue using the rest of the interface during an update.
 
 GNOME renders an image actor or `Shell.GLSLEffect` in the Shell background group and provides native panel controls. Plasma uses the `io.github.hmerritt.Aura` QML wallpaper and a StatusNotifierItem. Virtual shader scope shares one coordinate space across all monitors; primary scope leaves the last image visible on other monitors.
 
@@ -32,6 +32,6 @@ Fatal Rust errors and panics are written with backtraces and shown through freed
 
 ## Development validation
 
-Linux CI installs Qt Shader Tools only as a build dependency, validates both companions, builds all shader forms, runs the Rust suite, and exercises D-Bus ownership, methods, signals, reconnection, and single-instance rejection on a private session bus.
+Linux CI runs natively on Ubuntu 22.04 for x86_64 and aarch64. It installs Qt Shader Tools only as a build dependency, validates the installer and both companions, builds all shader forms, runs the Rust suite, exercises D-Bus ownership, methods, signals, reconnection, and single-instance rejection on a private session bus, and rejects binaries requiring symbols newer than GLIBC 2.35.
 
 The compositor acceptance matrix is GNOME and Plasma, X11 and Wayland, each with single- and dual-monitor layouts. It covers local/file/RSS rotation, state/cache/timers, reload and manual-next controls, image/shader transitions, monitor changes, shell restarts, renderer failures, normal shutdown, and crash fallback.

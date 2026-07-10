@@ -52,6 +52,7 @@ impl ksni::Tray for AuraTray {
                         "Running: {}",
                         format_running_duration(self.stats.running_duration())
                     )),
+                    info_item(format!("Updates: {}", self.stats.app_update_status())),
                 ],
                 ..Default::default()
             }
@@ -81,6 +82,15 @@ impl ksni::Tray for AuraTray {
                 icon_name: "document-properties".into(),
                 activate: Box::new(|tray: &mut AuraTray| {
                     let _ = tray.events.send(TrayEvent::OpenSettings);
+                }),
+                ..Default::default()
+            }
+            .into(),
+            StandardItem {
+                label: "Check for Updates".into(),
+                icon_name: "software-update-available".into(),
+                activate: Box::new(|tray: &mut AuraTray| {
+                    let _ = tray.events.send(TrayEvent::CheckForUpdates);
                 }),
                 ..Default::default()
             }
@@ -181,5 +191,9 @@ mod tests {
             panic!("expected Next Background menu item");
         };
         assert!(!next.enabled);
+        let MenuItem::Standard(check) = &menu[5] else {
+            panic!("expected Check for Updates menu item");
+        };
+        assert_eq!(check.label, "Check for Updates");
     }
 }

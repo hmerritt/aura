@@ -142,7 +142,7 @@ async fn run(args: Vec<String>, debug_requested: bool) -> Result<()> {
     write_startup_stage(debug_requested, "ensure_startup_registered");
     match installer::ensure_startup_registered() {
         Ok(StartupRegistrationStatus::SkippedNotInstalled) => {
-            info!("startup registration check skipped: app is not running from a Squirrel install");
+            info!("startup registration check skipped: app is not running from a managed package install");
         }
         Ok(StartupRegistrationStatus::AlreadyRegistered) => {
             info!("startup registration already present");

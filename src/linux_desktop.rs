@@ -84,6 +84,7 @@ struct ShaderSnapshot {
 struct StatisticsSnapshot {
     image_timer: String,
     remote_update_timer: String,
+    app_update_status: String,
     image_count: u64,
     shown: u64,
     skipped: u64,
@@ -419,6 +420,7 @@ impl LinuxDesktopRuntime {
             statistics: StatisticsSnapshot {
                 image_timer: self.statistics.timer_display(),
                 remote_update_timer: self.statistics.remote_update_timer_display(),
+                app_update_status: self.statistics.app_update_status(),
                 image_count: self.statistics.total_images(),
                 shown: self.statistics.images_shown(),
                 skipped: self.statistics.manual_skips(),
@@ -456,6 +458,39 @@ impl LinuxDesktopRuntime {
         });
     }
 
+    async fn prepare_for_uninstall(&self) -> Result<()> {
+        {
+            let mut state = self
+                .state
+                .write()
+                .expect("Linux runtime state lock poisoned");
+            state.revision = state.revision.wrapping_add(1);
+            state.renderer_generation = state.renderer_generation.wrapping_add(1);
+            state.mode = "inactive";
+            state.image_uri = None;
+            state.shader = None;
+            state.lease_expires_at_unix_ms = 0;
+        }
+        self.clear_renderer_listener();
+
+        let json = self.snapshot_json()?;
+        let connection = self
+            .connection
+            .get()
+            .context("Linux desktop connection is unavailable during uninstall")?;
+        let emitter = SignalEmitter::new(connection, OBJECT_PATH)
+            .context("failed to create uninstall snapshot emitter")?;
+        AuraService::snapshot_changed(&emitter, &json)
+            .await
+            .context("failed to emit uninstall snapshot")?;
+        if self.session.desktop == DesktopKind::Plasma {
+            apply_plasma_snapshot(connection, &json)
+                .await
+                .context("failed to restore the pre-Aura Plasma wallpaper")?;
+        }
+        Ok(())
+    }
+
     fn renew_lease(&self) -> bool {
         let mut state = self
             .state
@@ -491,6 +526,19 @@ impl AuraService {
 
     async fn open_settings(&self) {
         let _ = self.runtime.commands.send(TrayEvent::OpenSettings);
+    }
+
+    async fn check_for_updates(&self) {
+        let _ = self.runtime.commands.send(TrayEvent::CheckForUpdates);
+    }
+
+    async fn prepare_for_uninstall(&self) -> zbus::fdo::Result<()> {
+        self.runtime
+            .prepare_for_uninstall()
+            .await
+            .map_err(|error| zbus::fdo::Error::Failed(error.to_string()))?;
+        let _ = self.runtime.commands.send(TrayEvent::Exit);
+        Ok(())
     }
 
     async fn exit(&self) {
@@ -1043,6 +1091,17 @@ mod tests {
             commands.recv().await,
             Some(TrayEvent::OpenSettings)
         ));
+        let _: () = proxy.call("CheckForUpdates", &()).await.unwrap();
+        assert!(matches!(
+            commands.recv().await,
+            Some(TrayEvent::CheckForUpdates)
+        ));
+        let _: () = proxy.call("PrepareForUninstall", &()).await.unwrap();
+        assert!(matches!(commands.recv().await, Some(TrayEvent::Exit)));
+        let snapshot: String = proxy.call("GetSnapshot", &()).await.unwrap();
+        let snapshot: serde_json::Value = serde_json::from_str(&snapshot).unwrap();
+        assert_eq!(snapshot["mode"], "inactive");
+        assert!(snapshot["imageUri"].is_null());
         let _: () = proxy.call("Exit", &()).await.unwrap();
         assert!(matches!(commands.recv().await, Some(TrayEvent::Exit)));
 

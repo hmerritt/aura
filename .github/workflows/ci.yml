@@ -41,7 +41,15 @@ jobs:
           if-no-files-found: ignore
 
   linux:
-    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            arch: x86_64
+          - runner: ubuntu-22.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.runner }}
     env:
       QSB: /usr/lib/qt6/bin/qsb
     steps:
@@ -54,16 +62,20 @@ jobs:
       - name: Install Linux shader and companion validators
         run: |
           sudo apt-get update
-          sudo apt-get install --yes dbus-daemon nodejs qt6-declarative-dev-tools qt6-shader-baker
+          sudo apt-get install --yes dbus-daemon nodejs qt6-declarative-dev-tools qt6-shader-baker shellcheck
 
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
 
       - name: Validate companion metadata and source
         run: |
+          test "$(uname -m)" = "${{ matrix.arch }}"
+          shellcheck install.sh scripts/linux/*.sh
+          dash -n install.sh
           python3 scripts/linux/validate-companions.py
           node --check --input-type=module < integrations/linux/gnome/extension.js
           /usr/lib/qt6/bin/qmlformat integrations/linux/plasma/contents/ui/main.qml >/dev/null
+          bash scripts/linux/test-installer.sh
 
       - name: Check
         run: cargo check --locked --all-targets

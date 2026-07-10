@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Aura
+Comment=Lightweight wallpaper manager with live shader support
+Exec="@AURA_BIN@"
+Icon=io.github.hmerritt.Aura
+Terminal=false
+Categories=Utility;Graphics;
+StartupNotify=false
+X-GNOME-UsesNotifications=true

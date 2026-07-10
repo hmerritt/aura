@@ -14,19 +14,20 @@ Includes an optional <code>shader</code> mode, which engages a GPU-accelerated s
 <p align="center">
   <a href="https://github.com/hmerritt/aura/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/hmerritt/aura"></a>
   <a href="https://github.com/hmerritt/aura/releases/latest"><img alt="Downloads" src="https://img.shields.io/github/downloads/hmerritt/aura/total"></a>
-  <a href="./LICENSE.txt"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue"></a>
+  <a href="./LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue"></a>
 </p>
 
 ## Development
 
-`aura` can be developed and tested on Windows, Linux, and macOS. Full wallpaper application and tray behavior are implemented for Windows.
+`aura` can be developed and tested on Windows, Linux, and macOS. Full wallpaper and tray behavior are implemented for Windows, GNOME 45+, and KDE Plasma 6+.
 
 ### Prerequisites
 
 - Rust stable toolchain (`rustup`, `cargo`)
 - Rust nightly `nightly-2026-05-22-x86_64-pc-windows-msvc`
 - Windows development: MSVC toolchain/Visual Studio Build Tools (C++ build tools)
-- Linux/macOS: standard native build tools (`clang`/`gcc` and linker)
+- Linux: standard native build tools, D-Bus, Node.js, Qt 6 declarative tools, and Qt Shader Baker (`qsb`)
+- macOS: standard native build tools (`clang` and linker)
 
 ```sh
 rustup toolchain install nightly-2026-05-22-x86_64-pc-windows-msvc
@@ -74,6 +75,19 @@ pwsh -File scripts/windows/package-squirrel.ps1 -Version 1.2.3
 
 # Build with an explicit pinned Squirrel.Windows tool version
 pwsh -File scripts/windows/package-squirrel.ps1 -Version 1.2.3 -SquirrelWindowsVersion 2.0.1
+
+# Validate the Linux installer and desktop companions
+shellcheck install.sh scripts/linux/*.sh
+dash -n install.sh
+python3 scripts/linux/validate-companions.py
+bash scripts/linux/test-installer.sh
+
+# Build a fixed-name Linux release package
+bash scripts/linux/check-glibc.sh target/release/aura
+bash scripts/linux/package-release.sh --version 1.2.3 --arch x86_64 --binary target/release/aura --output dist
+
+# Generate the release manifest after both architecture archives exist
+bash scripts/linux/generate-manifest.sh 1.2.3 dist dist/aura-linux-manifest
 ```
 
 ### Platform Notes
@@ -87,7 +101,10 @@ pwsh -File scripts/windows/package-squirrel.ps1 -Version 1.2.3 -SquirrelWindowsV
 - Windows Squirrel installs automatically check/download app updates in the background and expose `Check for Updates` in tray.
 - Installer details: `docs/windows-installer.md`
 - Windows shader mode: shaders are compiled at build time from `shaders/*` (excluding `shader_builder`) using rust-gpu.
-- Linux/macOS: check/test/build are supported for development; wallpaper apply is currently unsupported at runtime.
+- Linux managed installs automatically check/download verified tarball updates and expose `Check for Updates` in both desktop menus.
+- Linux release and installer details: `docs/linux-installer.md`
+- Linux runtime details: `docs/linux-runtime.md`
+- macOS: check/test/build are supported for development; wallpaper apply is currently unsupported at runtime.
 
 ### Default Config Location
 
