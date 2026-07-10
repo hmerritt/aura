@@ -32,12 +32,6 @@ jobs:
         if: steps.tag_check.outputs.valid == 'true'
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Install rust-gpu nightly toolchain (must match shaders/rust-toolchain.toml)
-        if: steps.tag_check.outputs.valid == 'true'
-        shell: pwsh
-        run: |
-          rustup toolchain install nightly-2026-05-22 --profile minimal --component rust-src --component rustc-dev --component llvm-tools
-
       - name: Cache Cargo
         if: steps.tag_check.outputs.valid == 'true'
         uses: Swatinem/rust-cache@v2

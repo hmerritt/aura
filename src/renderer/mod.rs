@@ -10,22 +10,28 @@ pub enum RendererEvent {
 mod desktop_windows;
 #[cfg(windows)]
 mod engine;
-#[cfg(windows)]
-mod precompiled;
+#[cfg(any(windows, target_os = "linux"))]
+pub(crate) mod precompiled;
 #[cfg(windows)]
 mod wgpu_runtime;
+
+#[cfg(target_os = "linux")]
+mod linux;
 
 #[cfg(windows)]
 pub use engine::ShaderRenderer;
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+pub use linux::ShaderRenderer;
+
+#[cfg(not(any(windows, target_os = "linux")))]
 use crate::config::ShaderConfig;
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 use crate::errors::Result;
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 pub struct ShaderRenderer;
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 impl ShaderRenderer {
     pub fn start(_config: ShaderConfig) -> Result<Self> {
         anyhow::bail!("shader renderer is only supported on Windows")

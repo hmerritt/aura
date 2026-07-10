@@ -1,4 +1,5 @@
 use super::desktop_windows::DesktopRect;
+use super::precompiled::ShaderAssets;
 use crate::config::{ShaderColorSpace, ShaderConfig};
 use crate::errors::Result;
 use anyhow::{anyhow, bail, Context};
@@ -51,9 +52,9 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 struct ShaderUniforms {
     time_seconds: f32,
-    frame_index: u32,
-    mouse_enabled: u32,
-    _padding: u32,
+    frame_index: f32,
+    mouse_enabled: f32,
+    _padding: f32,
     resolution: [f32; 4],
     mouse: [f32; 4],
 }
@@ -87,7 +88,7 @@ pub struct WgpuRuntime {
 impl WgpuRuntime {
     pub fn new(
         window: Arc<Window>,
-        shader_bytes: &[u8],
+        shader_assets: &ShaderAssets,
         shader_config: ShaderConfig,
         desktop_rect: DesktopRect,
     ) -> Result<Self> {
@@ -183,7 +184,7 @@ impl WgpuRuntime {
         let (uniform_buffer, scene_bind_group, scene_pipeline) = create_scene_pipeline(
             &device,
             config.format,
-            shader_bytes,
+            shader_assets,
             shader_config.mouse_enabled,
             internal_size,
         )?;
@@ -232,7 +233,7 @@ impl WgpuRuntime {
 
     pub fn apply_config(
         &mut self,
-        shader_bytes: &[u8],
+        shader_assets: &ShaderAssets,
         shader_config: ShaderConfig,
         desktop_rect: DesktopRect,
     ) -> Result<()> {
@@ -312,7 +313,7 @@ impl WgpuRuntime {
         let (uniform_buffer, scene_bind_group, scene_pipeline) = create_scene_pipeline(
             &self.device,
             config.format,
-            shader_bytes,
+            shader_assets,
             shader_config.mouse_enabled,
             internal_size,
         )?;
@@ -407,9 +408,9 @@ impl WgpuRuntime {
         let scaled_mouse = scale_mouse_to_internal(mouse, output_size, self.internal_target.size);
         let uniforms = ShaderUniforms {
             time_seconds: self.started_at.elapsed().as_secs_f32(),
-            frame_index: self.frame_index,
-            mouse_enabled: u32::from(self.mouse_enabled),
-            _padding: 0,
+            frame_index: self.frame_index as f32,
+            mouse_enabled: if self.mouse_enabled { 1.0 } else { 0.0 },
+            _padding: 0.0,
             resolution: [
                 self.internal_target.size.width as f32,
                 self.internal_target.size.height as f32,
@@ -504,21 +505,26 @@ impl WgpuRuntime {
 fn create_scene_pipeline(
     device: &wgpu::Device,
     target_format: wgpu::TextureFormat,
-    shader_bytes: &[u8],
+    shader_assets: &ShaderAssets,
     mouse_enabled: bool,
     initial_resolution: PhysicalSize<u32>,
 ) -> Result<(wgpu::Buffer, wgpu::BindGroup, wgpu::RenderPipeline)> {
-    let shader_words = load_spirv_words(shader_bytes)?;
-    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("aura-live-shader"),
-        source: wgpu::ShaderSource::SpirV(Cow::Owned(shader_words)),
+    let vertex_words = load_spirv_words(shader_assets.vertex_spirv)?;
+    let vertex_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("aura-live-shader-vertex"),
+        source: wgpu::ShaderSource::SpirV(Cow::Owned(vertex_words)),
+    });
+    let fragment_words = load_spirv_words(shader_assets.fragment_spirv)?;
+    let fragment_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("aura-live-shader-fragment"),
+        source: wgpu::ShaderSource::SpirV(Cow::Owned(fragment_words)),
     });
 
     let uniforms = ShaderUniforms {
         time_seconds: 0.0,
-        frame_index: 0,
-        mouse_enabled: u32::from(mouse_enabled),
-        _padding: 0,
+        frame_index: 0.0,
+        mouse_enabled: if mouse_enabled { 1.0 } else { 0.0 },
+        _padding: 0.0,
         resolution: [
             initial_resolution.width as f32,
             initial_resolution.height as f32,
@@ -565,14 +571,14 @@ fn create_scene_pipeline(
         label: Some("aura-shader-scene-pipeline"),
         layout: Some(&pipeline_layout),
         vertex: wgpu::VertexState {
-            module: &shader,
-            entry_point: Some("vs_main"),
+            module: &vertex_shader,
+            entry_point: Some("main"),
             buffers: &[],
             compilation_options: wgpu::PipelineCompilationOptions::default(),
         },
         fragment: Some(wgpu::FragmentState {
-            module: &shader,
-            entry_point: Some("fs_main"),
+            module: &fragment_shader,
+            entry_point: Some("main"),
             targets: &[Some(wgpu::ColorTargetState {
                 format: target_format,
                 blend: Some(wgpu::BlendState::REPLACE),
@@ -792,7 +798,7 @@ fn pick_unorm_surface_format(formats: &[wgpu::TextureFormat]) -> wgpu::TextureFo
 }
 
 fn load_spirv_words(bytes: &[u8]) -> Result<Vec<u32>> {
-    if bytes.len() % 4 != 0 {
+    if !bytes.chunks_exact(4).remainder().is_empty() {
         bail!("embedded shader binary size is not a multiple of 4");
     }
 

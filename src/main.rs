@@ -8,6 +8,8 @@ mod debug_capture;
 mod errors;
 mod image_pipeline;
 mod installer;
+#[cfg(target_os = "linux")]
+mod linux_desktop;
 mod logging;
 mod renderer;
 mod rotation;
@@ -164,7 +166,6 @@ async fn run(args: Vec<String>, debug_requested: bool) -> Result<()> {
     }
 
     let mut sources = build_sources(&config, cache.clone())?;
-    let backend = wallpaper::default_backend();
     let mut state_store = StateStore::new(config.state_file.clone());
 
     let persisted_state = match state_store.load() {
@@ -211,9 +212,10 @@ async fn run(args: Vec<String>, debug_requested: bool) -> Result<()> {
     session_stats.set_total_images(local_images_count + remote_images_count);
 
     let (tray_event_tx, mut tray_event_rx) = tokio::sync::mpsc::unbounded_channel::<TrayEvent>();
-    let mut _single_instance_guard = None;
-    let mut _tray_controller = None;
-    if options.tray_enabled && cfg!(windows) {
+    let mut _single_instance_guard: Option<tray::SingleInstanceGuard> = None;
+    let mut _tray_controller: Option<tray::TrayController> = None;
+    #[cfg(windows)]
+    if options.tray_enabled {
         _single_instance_guard = match tray::try_acquire_single_instance()? {
             Some(guard) => Some(guard),
             None => {
@@ -222,12 +224,56 @@ async fn run(args: Vec<String>, debug_requested: bool) -> Result<()> {
             }
         };
 
-        _tray_controller = Some(tray::spawn(
+        _tray_controller = Some(
+            tray::spawn(
+                config_path.clone(),
+                tray_event_tx.clone(),
+                session_stats.clone(),
+            )
+            .await?,
+        );
+        info!("tray mode enabled");
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let session = linux_desktop::initialize(
             config_path.clone(),
+            options.tray_enabled,
             tray_event_tx.clone(),
             session_stats.clone(),
-        )?);
-        info!("tray mode enabled");
+        )
+        .await?;
+        if options.tray_enabled && session.desktop == linux_desktop::DesktopKind::Plasma {
+            _tray_controller = Some(
+                tray::spawn(
+                    config_path.clone(),
+                    tray_event_tx.clone(),
+                    session_stats.clone(),
+                )
+                .await?,
+            );
+            info!("Plasma StatusNotifierItem tray enabled");
+        }
+    }
+
+    let backend = wallpaper::default_backend();
+    let mut last_image_id = persisted_state.last_image_id.clone();
+    #[cfg(target_os = "linux")]
+    let mut initial_image_applied = false;
+    #[cfg(not(target_os = "linux"))]
+    let initial_image_applied = false;
+    #[cfg(target_os = "linux")]
+    if config.renderer == RendererMode::Shader {
+        if let Some(next_id) =
+            try_switch_once(&mut rotation, cache.as_ref(), &*backend, &config).await?
+        {
+            session_stats.inc_images_shown();
+            last_image_id = Some(next_id);
+            initial_image_applied = true;
+            persist_state(&state_store, &rotation, last_image_id.clone())?;
+            info!("prepared a persistent image fallback beneath the Linux shader");
+        }
     }
 
     let mut renderer: Option<ShaderRenderer> = None;
@@ -260,8 +306,7 @@ async fn run(args: Vec<String>, debug_requested: bool) -> Result<()> {
         session_stats.set_shader_name(String::new());
     }
 
-    let mut last_image_id = persisted_state.last_image_id.clone();
-    if active_mode == ActiveMode::Image {
+    if active_mode == ActiveMode::Image && !initial_image_applied {
         if let Some(next_id) =
             try_switch_once(&mut rotation, cache.as_ref(), &*backend, &config).await?
         {
@@ -338,17 +383,21 @@ async fn run(args: Vec<String>, debug_requested: bool) -> Result<()> {
                     }
                     Some(UpdaterEvent::InstallReady) => {
                         restart_pending_on_next_switch = true;
-                        if active_mode == ActiveMode::Shader {
-                            if restart_after_update(
+                        if active_mode == ActiveMode::Shader
+                            && restart_after_update(
                                 updater_restart_context.as_ref(),
                                 &state_store,
                                 &rotation,
                                 last_image_id.clone(),
                                 &mut _single_instance_guard,
-                            ) {
-                                stop_renderer(&mut renderer, "update restart while shader mode is active").await;
-                                break;
-                            }
+                            )
+                        {
+                            stop_renderer(
+                                &mut renderer,
+                                "update restart while shader mode is active",
+                            )
+                            .await;
+                            break;
                         }
                     }
                     None => {
@@ -386,8 +435,19 @@ async fn run(args: Vec<String>, debug_requested: bool) -> Result<()> {
                                         warn!(error = %error, "failed to persist state after shader fallback");
                                     }
                                 }
-                                Ok(None) => warn!("shader fallback requested image mode but no image was available"),
-                                Err(error) => warn!(error = %error, "failed to apply image mode fallback"),
+                                Ok(None) => {
+                                    #[cfg(target_os = "linux")]
+                                    return Err(anyhow::anyhow!(
+                                        "Linux shell renderer failed and no image was available for desktop fallback"
+                                    ));
+                                    #[cfg(not(target_os = "linux"))]
+                                    warn!("shader fallback requested image mode but no image was available");
+                                }
+                                Err(error) => {
+                                    return Err(error).context(
+                                        "shader renderer failed and the Linux/Windows image fallback could not be applied",
+                                    );
+                                }
                             }
                         }
                     }
@@ -670,6 +730,11 @@ async fn run(args: Vec<String>, debug_requested: bool) -> Result<()> {
                             &mut updater_operation_in_progress,
                             UpdateTrigger::Manual,
                         );
+                    }
+                    Some(TrayEvent::OpenSettings) => {
+                        if let Err(error) = tray::open_settings(&config_path) {
+                            warn!(error = %error, path = %config_path.display(), "failed to open settings");
+                        }
                     }
                     Some(TrayEvent::Exit) => {
                         info!("tray requested exit, stopping aura");

@@ -153,6 +153,10 @@ pub async fn resolve_image_path(download_dir: &Path, image_url: &str) -> Result<
 fn shared_client() -> &'static Client {
     static CLIENT: OnceLock<Client> = OnceLock::new();
     CLIENT.get_or_init(|| {
+        // reqwest's provider-neutral rustls feature keeps Linux builds on the
+        // portable ring backend instead of requiring the AWS-LC C toolchain.
+        // A provider may already have been installed by another TLS consumer.
+        let _ = rustls::crypto::ring::default_provider().install_default();
         Client::builder()
             .user_agent("aura/0.1 (+https://example.invalid)")
             .connect_timeout(Duration::from_secs(10))
