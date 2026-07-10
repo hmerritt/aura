@@ -4,3 +4,6 @@ dist/
 /shaders/*.spv
 /shaders/**/Cargo.lock
 /target
+ui/node_modules/
+ui/.tanstack/
+ui/dist/
