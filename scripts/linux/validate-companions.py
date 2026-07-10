@@ -55,6 +55,8 @@ def main() -> None:
             "SnapshotChanged",
             "ReportRendererStatus",
             "Shell.GLSLEffect",
+            "const AuraIndicator = GObject.registerClass(",
+            "class AuraIndicator extends PanelMenu.Button",
         ),
     )
     require_text(

@@ -94,9 +94,10 @@ cogl_color_out = aura_result * cogl_color_in;`;
     }
 });
 
+const AuraIndicator = GObject.registerClass(
 class AuraIndicator extends PanelMenu.Button {
-    constructor(extension) {
-        super(0.0, 'Aura');
+    _init(extension) {
+        super._init(0.0, 'Aura');
         this._extension = extension;
         this.add_child(new St.Icon({
             icon_name: 'preferences-desktop-wallpaper-symbolic',
@@ -133,7 +134,7 @@ class AuraIndicator extends PanelMenu.Button {
         ].join('\n');
         this._next.setSensitive(snapshot.mode === 'image');
     }
-}
+});
 
 export default class AuraExtension extends Extension {
     enable() {
@@ -224,19 +225,40 @@ export default class AuraExtension extends Extension {
     }
 
     _consumeSnapshot(json) {
+        let snapshot;
         try {
-            const snapshot = JSON.parse(json);
+            snapshot = JSON.parse(json);
             if (snapshot.version !== 1) throw new Error(`unsupported snapshot version ${snapshot.version}`);
-            this._snapshot = snapshot;
-            this._applySnapshot(snapshot);
         } catch (error) {
             console.error(`Aura: invalid snapshot: ${error.message}`);
+            return;
         }
+        this._snapshot = snapshot;
+        this._applySnapshot(snapshot);
     }
 
     _applySnapshot(snapshot, forceRendererRebuild = false) {
         if (!snapshot) return;
-        this._syncIndicator(snapshot);
+        try {
+            this._applyRendererSnapshot(snapshot, forceRendererRebuild);
+        } catch (error) {
+            const detail = error.message ?? String(error);
+            console.error(`Aura: failed to apply ${snapshot.mode} renderer: ${detail}`);
+            if (snapshot.mode === 'shader') {
+                this._report(snapshot.rendererGeneration, 'error', detail);
+                this._destroyShader();
+            }
+        }
+        try {
+            this._syncIndicator(snapshot);
+        } catch (error) {
+            const detail = error.message ?? String(error);
+            console.error(`Aura: failed to update panel indicator: ${detail}`);
+            this._destroyIndicator();
+        }
+    }
+
+    _applyRendererSnapshot(snapshot, forceRendererRebuild) {
         if (snapshot.mode === 'inactive') {
             this._clearActors();
             return;
@@ -290,15 +312,9 @@ export default class AuraExtension extends Extension {
         this._shaderActor.set_position(monitor.x, monitor.y);
         this._shaderActor.set_size(monitor.width, monitor.height);
         Main.layoutManager._backgroundGroup.add_child(this._shaderActor);
-        try {
-            this._shaderEffect = new AuraShaderEffect(shader.gnomeGlsl, shader.colorSpace);
-            this._shaderActor.add_effect_with_name('aura-shader', this._shaderEffect);
-            this._rendererGeneration = snapshot.rendererGeneration;
-        } catch (error) {
-            this._report(snapshot.rendererGeneration, 'error', error.message);
-            this._destroyShader();
-            return;
-        }
+        this._shaderEffect = new AuraShaderEffect(shader.gnomeGlsl, shader.colorSpace);
+        this._shaderActor.add_effect_with_name('aura-shader', this._shaderEffect);
+        this._rendererGeneration = snapshot.rendererGeneration;
         const internalWidth = Math.max(1, Math.round(monitor.width * shader.resolutionPercentage / 100));
         const internalHeight = Math.max(1, Math.round(monitor.height * shader.resolutionPercentage / 100));
         const intervalMs = Math.max(1, Math.round(1000 / Math.max(1, shader.targetFps)));
