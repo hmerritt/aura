@@ -277,10 +277,10 @@ image = {{
 	# Supported source types: "file" | "directory" | "rss"
 	sources = [
         # RSS feed of ambient-tv images (~120 high-quality images)
-        # {{ type = "rss", url = "https://mrrtt.me/atv" }}
+        {{ type = "rss", url = "https://mrrtt.me/atv" }}
 
         # Your own directory of images
-        {{ type = "directory", path = "{}" }}
+        #{{ type = "directory", path = "{}" }}
     ]
     timer = "3h"                     # "40s" | "12m" | "3h"
 	remoteUpdateTimer = "2h"         # "40s" | "12m" | "3h"
@@ -291,7 +291,7 @@ image = {{
 # Shader mode options (used when renderer = "shader")
 shader = {{
 	name = "gradient_glossy"         # "gradient_glossy" | "limestone_cave" | "dither_asci_1" | "dither_asci_2" | "dither_warp" | "silk"
-	target_fps = 50                  # 1-999
+	target_fps = 60                  # 1-999
 	resolution = 100                 # 1-100 (% internal shader render resolution; output stays full-screen)
 	mouse_enabled = false            # false | true
 	desktop_scope = "virtual"        # "virtual" | "primary"
