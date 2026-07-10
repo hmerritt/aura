@@ -75,7 +75,14 @@ image = { version = "0.25", default-features = false, features = [
     "bmp",
 ] }
 
+[profile.dev]
+opt-level = 0
+debug = 1
+incremental = true
+codegen-units = 256
+lto = "off"
+
 [profile.release]
 strip = true    # Automatically strip symbols from the binary.
-opt-level = "z" # Optimize for size.
+opt-level = 3
 lto = true
