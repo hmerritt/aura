@@ -69,7 +69,7 @@ void main() {
         aura_uniforms.resolution,
         aura_uniforms.mouse
     );
-    aura_output = aura_main(gl_FragCoord.xy, uniforms);
+    aura_output = aura_main(gl_FragCoord.xy + aura_uniforms.resolution.zw, uniforms);
 }
 "#;
 

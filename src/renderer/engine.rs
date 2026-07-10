@@ -1,9 +1,10 @@
 use super::desktop_windows::{
     attach_window_to_desktop, cursor_position_for_scope, desktop_rect_for_scope,
-    place_window_over_desktop, show_desktop_window, DesktopRect,
+    place_window_over_desktop, show_desktop_window,
 };
 use super::precompiled;
 use super::wgpu_runtime::WgpuRuntime;
+use super::DesktopRect;
 use super::RendererEvent;
 use crate::config::ShaderConfig;
 use crate::errors::Result;
@@ -285,12 +286,13 @@ impl RendererApp {
         }
 
         if let Some(runtime) = self.runtime.as_mut() {
-            runtime.apply_config(shader_assets, config.clone(), target_rect)?;
+            runtime.apply_config(shader_assets, config.clone(), target_rect, target_rect)?;
         } else {
             self.runtime = Some(WgpuRuntime::new(
                 window.clone(),
                 shader_assets,
                 config.clone(),
+                target_rect,
                 target_rect,
             )?);
         }
@@ -438,6 +440,7 @@ impl ApplicationHandler<UserEvent> for RendererApp {
             window.clone(),
             self.shader_assets,
             self.config.clone(),
+            desktop_rect,
             desktop_rect,
         ) {
             Ok(runtime) => runtime,

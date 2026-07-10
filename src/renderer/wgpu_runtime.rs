@@ -1,5 +1,5 @@
-use super::desktop_windows::DesktopRect;
 use super::precompiled::ShaderAssets;
+use super::DesktopRect;
 use crate::config::{ShaderColorSpace, ShaderConfig};
 use crate::errors::Result;
 use anyhow::{anyhow, bail, Context};
@@ -63,26 +63,42 @@ struct InternalTarget {
     _texture: wgpu::Texture,
     view: wgpu::TextureView,
     bind_group: wgpu::BindGroup,
-    size: PhysicalSize<u32>,
 }
 
 pub struct WgpuRuntime {
-    _instance: wgpu::Instance,
+    _instance: Arc<wgpu::Instance>,
+    adapter: Arc<wgpu::Adapter>,
     surface: wgpu::Surface<'static>,
-    device: wgpu::Device,
-    queue: wgpu::Queue,
+    device: Arc<wgpu::Device>,
+    queue: Arc<wgpu::Queue>,
     config: wgpu::SurfaceConfiguration,
-    scene_pipeline: wgpu::RenderPipeline,
+    scene_pipeline: Arc<wgpu::RenderPipeline>,
     scene_bind_group: wgpu::BindGroup,
     uniform_buffer: wgpu::Buffer,
-    composite_pipeline: wgpu::RenderPipeline,
-    composite_bind_group_layout: wgpu::BindGroupLayout,
-    composite_sampler: wgpu::Sampler,
+    composite_pipeline: Arc<wgpu::RenderPipeline>,
+    composite_bind_group_layout: Arc<wgpu::BindGroupLayout>,
+    composite_sampler: Arc<wgpu::Sampler>,
     internal_target: InternalTarget,
     started_at: Instant,
     frame_index: u32,
     mouse_enabled: bool,
     resolution_percent: u8,
+    surface_rect: DesktopRect,
+    scene_rect: DesktopRect,
+}
+
+#[derive(Clone)]
+pub(crate) struct SharedWgpuContext {
+    instance: Arc<wgpu::Instance>,
+    adapter: Arc<wgpu::Adapter>,
+    device: Arc<wgpu::Device>,
+    queue: Arc<wgpu::Queue>,
+    scene_pipeline: Arc<wgpu::RenderPipeline>,
+    scene_bind_group_layout: Arc<wgpu::BindGroupLayout>,
+    composite_pipeline: Arc<wgpu::RenderPipeline>,
+    composite_bind_group_layout: Arc<wgpu::BindGroupLayout>,
+    composite_sampler: Arc<wgpu::Sampler>,
+    format: wgpu::TextureFormat,
 }
 
 impl WgpuRuntime {
@@ -90,30 +106,66 @@ impl WgpuRuntime {
         window: Arc<Window>,
         shader_assets: &ShaderAssets,
         shader_config: ShaderConfig,
-        desktop_rect: DesktopRect,
+        surface_rect: DesktopRect,
+        scene_rect: DesktopRect,
     ) -> Result<Self> {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_with_display_handle(
-            Box::new(window.clone()),
-        ));
+        Self::new_shared(
+            window,
+            shader_assets,
+            shader_config,
+            surface_rect,
+            scene_rect,
+            None,
+        )
+        .map(|(runtime, _)| runtime)
+    }
+
+    pub(crate) fn new_shared(
+        window: Arc<Window>,
+        shader_assets: &ShaderAssets,
+        shader_config: ShaderConfig,
+        surface_rect: DesktopRect,
+        scene_rect: DesktopRect,
+        shared: Option<SharedWgpuContext>,
+    ) -> Result<(Self, SharedWgpuContext)> {
+        let instance = shared.as_ref().map_or_else(
+            || {
+                Arc::new(wgpu::Instance::new(
+                    wgpu::InstanceDescriptor::new_with_display_handle(Box::new(window.clone())),
+                ))
+            },
+            |shared| shared.instance.clone(),
+        );
         let surface = instance
             .create_surface(window.clone())
             .map_err(|error| anyhow!("failed to create wgpu surface: {error}"))?;
 
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: SHADER_POWER_PREFERENCE,
-            force_fallback_adapter: false,
-            compatible_surface: Some(&surface),
-            apply_limit_buckets: false,
-        }))
-        .context("failed to find a compatible GPU adapter")?;
-
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            label: Some("aura-shader-device"),
-            required_features: wgpu::Features::empty(),
-            required_limits: wgpu::Limits::default(),
-            ..Default::default()
-        }))
-        .context("failed to request GPU device")?;
+        let (adapter, device, queue) = if let Some(shared) = shared.as_ref() {
+            (
+                shared.adapter.clone(),
+                shared.device.clone(),
+                shared.queue.clone(),
+            )
+        } else {
+            let adapter = Arc::new(
+                pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+                    power_preference: SHADER_POWER_PREFERENCE,
+                    force_fallback_adapter: false,
+                    compatible_surface: Some(&surface),
+                    apply_limit_buckets: false,
+                }))
+                .context("failed to find a compatible GPU adapter")?,
+            );
+            let (device, queue) =
+                pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+                    label: Some("aura-shader-device"),
+                    required_features: wgpu::Features::empty(),
+                    required_limits: wgpu::Limits::default(),
+                    ..Default::default()
+                }))
+                .context("failed to request GPU device")?;
+            (adapter, Arc::new(device), Arc::new(queue))
+        };
 
         let caps = surface.get_capabilities(&adapter);
         if caps.formats.is_empty() {
@@ -139,8 +191,8 @@ impl WgpuRuntime {
             .unwrap_or(wgpu::CompositeAlphaMode::Auto);
 
         let output_size = PhysicalSize::new(
-            desktop_rect.width.max(1) as u32,
-            desktop_rect.height.max(1) as u32,
+            surface_rect.width.max(1) as u32,
+            surface_rect.height.max(1) as u32,
         );
         let internal_size = compute_internal_render_size(output_size, shader_config.resolution);
         let config = wgpu::SurfaceConfiguration {
@@ -181,17 +233,59 @@ impl WgpuRuntime {
 
         surface.configure(&device, &config);
 
-        let (uniform_buffer, scene_bind_group, scene_pipeline) = create_scene_pipeline(
-            &device,
-            config.format,
-            shader_assets,
-            shader_config.mouse_enabled,
-            internal_size,
-        )?;
-        let composite_bind_group_layout = create_composite_bind_group_layout(&device);
-        let composite_sampler = create_composite_sampler(&device);
-        let composite_pipeline =
-            create_composite_pipeline(&device, config.format, &composite_bind_group_layout);
+        let (
+            uniform_buffer,
+            scene_bind_group,
+            scene_pipeline,
+            scene_bind_group_layout,
+            composite_pipeline,
+            composite_bind_group_layout,
+            composite_sampler,
+        ) = if let Some(shared) = shared.as_ref() {
+            if shared.format != config.format {
+                bail!("all macOS display surfaces must use the same color format");
+            }
+            let (uniform_buffer, scene_bind_group) = create_scene_binding(
+                &device,
+                &shared.scene_bind_group_layout,
+                shader_config.mouse_enabled,
+                internal_size,
+            );
+            (
+                uniform_buffer,
+                scene_bind_group,
+                shared.scene_pipeline.clone(),
+                shared.scene_bind_group_layout.clone(),
+                shared.composite_pipeline.clone(),
+                shared.composite_bind_group_layout.clone(),
+                shared.composite_sampler.clone(),
+            )
+        } else {
+            let (uniform_buffer, scene_bind_group, scene_pipeline, scene_layout) =
+                create_scene_pipeline(
+                    &device,
+                    config.format,
+                    shader_assets,
+                    shader_config.mouse_enabled,
+                    internal_size,
+                )?;
+            let composite_layout = Arc::new(create_composite_bind_group_layout(&device));
+            let composite_sampler = Arc::new(create_composite_sampler(&device));
+            let composite_pipeline = Arc::new(create_composite_pipeline(
+                &device,
+                config.format,
+                &composite_layout,
+            ));
+            (
+                uniform_buffer,
+                scene_bind_group,
+                Arc::new(scene_pipeline),
+                Arc::new(scene_layout),
+                composite_pipeline,
+                composite_layout,
+                composite_sampler,
+            )
+        };
         let internal_target = create_internal_target(
             &device,
             internal_size,
@@ -200,24 +294,43 @@ impl WgpuRuntime {
             &composite_sampler,
         );
 
-        Ok(Self {
-            _instance: instance,
-            surface,
-            device,
-            queue,
-            config,
-            scene_pipeline,
-            scene_bind_group,
-            uniform_buffer,
-            composite_pipeline,
-            composite_bind_group_layout,
-            composite_sampler,
-            internal_target,
-            started_at: Instant::now(),
-            frame_index: 0,
-            mouse_enabled: shader_config.mouse_enabled,
-            resolution_percent: shader_config.resolution,
-        })
+        let shared = SharedWgpuContext {
+            instance: instance.clone(),
+            adapter: adapter.clone(),
+            device: device.clone(),
+            queue: queue.clone(),
+            scene_pipeline: scene_pipeline.clone(),
+            scene_bind_group_layout,
+            composite_pipeline: composite_pipeline.clone(),
+            composite_bind_group_layout: composite_bind_group_layout.clone(),
+            composite_sampler: composite_sampler.clone(),
+            format: config.format,
+        };
+
+        Ok((
+            Self {
+                _instance: instance,
+                adapter,
+                surface,
+                device,
+                queue,
+                config,
+                scene_pipeline,
+                scene_bind_group,
+                uniform_buffer,
+                composite_pipeline,
+                composite_bind_group_layout,
+                composite_sampler,
+                internal_target,
+                started_at: Instant::now(),
+                frame_index: 0,
+                mouse_enabled: shader_config.mouse_enabled,
+                resolution_percent: shader_config.resolution,
+                surface_rect,
+                scene_rect,
+            },
+            shared,
+        ))
     }
 
     pub fn resize(&mut self, new_size: PhysicalSize<u32>) {
@@ -227,6 +340,10 @@ impl WgpuRuntime {
 
         self.config.width = new_size.width;
         self.config.height = new_size.height;
+        self.surface_rect.width = new_size.width as i32;
+        self.surface_rect.height = new_size.height as i32;
+        self.scene_rect.width = new_size.width as i32;
+        self.scene_rect.height = new_size.height as i32;
         self.surface.configure(&self.device, &self.config);
         self.recreate_internal_target();
     }
@@ -235,19 +352,10 @@ impl WgpuRuntime {
         &mut self,
         shader_assets: &ShaderAssets,
         shader_config: ShaderConfig,
-        desktop_rect: DesktopRect,
+        surface_rect: DesktopRect,
+        scene_rect: DesktopRect,
     ) -> Result<()> {
-        let adapter = pollster::block_on(self._instance.request_adapter(
-            &wgpu::RequestAdapterOptions {
-                power_preference: SHADER_POWER_PREFERENCE,
-                force_fallback_adapter: false,
-                compatible_surface: Some(&self.surface),
-                apply_limit_buckets: false,
-            },
-        ))
-        .context("failed to find a compatible GPU adapter")?;
-
-        let caps = self.surface.get_capabilities(&adapter);
+        let caps = self.surface.get_capabilities(&self.adapter);
         if caps.formats.is_empty() {
             bail!("adapter reported no surface formats");
         }
@@ -270,8 +378,8 @@ impl WgpuRuntime {
             .copied()
             .unwrap_or(wgpu::CompositeAlphaMode::Auto);
         let output_size = PhysicalSize::new(
-            desktop_rect.width.max(1) as u32,
-            desktop_rect.height.max(1) as u32,
+            surface_rect.width.max(1) as u32,
+            surface_rect.height.max(1) as u32,
         );
         let internal_size = compute_internal_render_size(output_size, shader_config.resolution);
         let config = wgpu::SurfaceConfiguration {
@@ -310,13 +418,14 @@ impl WgpuRuntime {
             );
         }
 
-        let (uniform_buffer, scene_bind_group, scene_pipeline) = create_scene_pipeline(
-            &self.device,
-            config.format,
-            shader_assets,
-            shader_config.mouse_enabled,
-            internal_size,
-        )?;
+        let (uniform_buffer, scene_bind_group, scene_pipeline, _scene_layout) =
+            create_scene_pipeline(
+                &self.device,
+                config.format,
+                shader_assets,
+                shader_config.mouse_enabled,
+                internal_size,
+            )?;
         let composite_pipeline = create_composite_pipeline(
             &self.device,
             config.format,
@@ -332,13 +441,15 @@ impl WgpuRuntime {
 
         self.surface.configure(&self.device, &config);
         self.config = config;
-        self.scene_pipeline = scene_pipeline;
+        self.scene_pipeline = Arc::new(scene_pipeline);
         self.scene_bind_group = scene_bind_group;
         self.uniform_buffer = uniform_buffer;
-        self.composite_pipeline = composite_pipeline;
+        self.composite_pipeline = Arc::new(composite_pipeline);
         self.internal_target = internal_target;
         self.mouse_enabled = shader_config.mouse_enabled;
         self.resolution_percent = shader_config.resolution;
+        self.surface_rect = surface_rect;
+        self.scene_rect = scene_rect;
         self.started_at = Instant::now();
         self.frame_index = 0;
 
@@ -351,6 +462,7 @@ impl WgpuRuntime {
 
         let WgpuRuntime {
             _instance,
+            adapter: _adapter,
             surface,
             device,
             queue,
@@ -366,6 +478,8 @@ impl WgpuRuntime {
             frame_index: _frame_index,
             mouse_enabled: _mouse_enabled,
             resolution_percent: _resolution_percent,
+            surface_rect: _surface_rect,
+            scene_rect: _scene_rect,
         } = self;
 
         poll_device_for_shutdown(&device);
@@ -404,19 +518,15 @@ impl WgpuRuntime {
             }
         };
 
-        let output_size = PhysicalSize::new(self.config.width, self.config.height);
-        let scaled_mouse = scale_mouse_to_internal(mouse, output_size, self.internal_target.size);
+        let scale = f32::from(self.resolution_percent) / 100.0;
+        let scaled_mouse = [mouse[0] * scale, mouse[1] * scale];
+        let resolution = scene_resolution_uniform(self.surface_rect, self.scene_rect, scale);
         let uniforms = ShaderUniforms {
             time_seconds: self.started_at.elapsed().as_secs_f32(),
             frame_index: self.frame_index as f32,
             mouse_enabled: if self.mouse_enabled { 1.0 } else { 0.0 },
             _padding: 0.0,
-            resolution: [
-                self.internal_target.size.width as f32,
-                self.internal_target.size.height as f32,
-                0.0,
-                0.0,
-            ],
+            resolution,
             mouse: [scaled_mouse[0], scaled_mouse[1], 0.0, 0.0],
         };
         self.queue
@@ -508,7 +618,12 @@ fn create_scene_pipeline(
     shader_assets: &ShaderAssets,
     mouse_enabled: bool,
     initial_resolution: PhysicalSize<u32>,
-) -> Result<(wgpu::Buffer, wgpu::BindGroup, wgpu::RenderPipeline)> {
+) -> Result<(
+    wgpu::Buffer,
+    wgpu::BindGroup,
+    wgpu::RenderPipeline,
+    wgpu::BindGroupLayout,
+)> {
     let vertex_words = load_spirv_words(shader_assets.vertex_spirv)?;
     let vertex_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("aura-live-shader-vertex"),
@@ -518,26 +633,6 @@ fn create_scene_pipeline(
     let fragment_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("aura-live-shader-fragment"),
         source: wgpu::ShaderSource::SpirV(Cow::Owned(fragment_words)),
-    });
-
-    let uniforms = ShaderUniforms {
-        time_seconds: 0.0,
-        frame_index: 0.0,
-        mouse_enabled: if mouse_enabled { 1.0 } else { 0.0 },
-        _padding: 0.0,
-        resolution: [
-            initial_resolution.width as f32,
-            initial_resolution.height as f32,
-            0.0,
-            0.0,
-        ],
-        mouse: [0.0, 0.0, 0.0, 0.0],
-    };
-
-    let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("aura-shader-uniform-init"),
-        contents: bytemuck::bytes_of(&uniforms),
-        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
     });
 
     let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -553,14 +648,12 @@ fn create_scene_pipeline(
             count: None,
         }],
     });
-    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("aura-shader-bind-group"),
-        layout: &bind_group_layout,
-        entries: &[wgpu::BindGroupEntry {
-            binding: 0,
-            resource: uniform_buffer.as_entire_binding(),
-        }],
-    });
+    let (uniform_buffer, bind_group) = create_scene_binding(
+        device,
+        &bind_group_layout,
+        mouse_enabled,
+        initial_resolution,
+    );
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("aura-shader-pipeline-layout"),
         bind_group_layouts: &[Some(&bind_group_layout)],
@@ -601,7 +694,42 @@ fn create_scene_pipeline(
         cache: None,
     });
 
-    Ok((uniform_buffer, bind_group, pipeline))
+    Ok((uniform_buffer, bind_group, pipeline, bind_group_layout))
+}
+
+fn create_scene_binding(
+    device: &wgpu::Device,
+    bind_group_layout: &wgpu::BindGroupLayout,
+    mouse_enabled: bool,
+    initial_resolution: PhysicalSize<u32>,
+) -> (wgpu::Buffer, wgpu::BindGroup) {
+    let uniforms = ShaderUniforms {
+        time_seconds: 0.0,
+        frame_index: 0.0,
+        mouse_enabled: if mouse_enabled { 1.0 } else { 0.0 },
+        _padding: 0.0,
+        resolution: [
+            initial_resolution.width as f32,
+            initial_resolution.height as f32,
+            0.0,
+            0.0,
+        ],
+        mouse: [0.0, 0.0, 0.0, 0.0],
+    };
+    let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("aura-shader-uniform-init"),
+        contents: bytemuck::bytes_of(&uniforms),
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+    });
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("aura-shader-bind-group"),
+        layout: bind_group_layout,
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: uniform_buffer.as_entire_binding(),
+        }],
+    });
+    (uniform_buffer, bind_group)
 }
 
 fn create_composite_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
@@ -730,7 +858,6 @@ fn create_internal_target(
         _texture: texture,
         view,
         bind_group,
-        size,
     }
 }
 
@@ -749,17 +876,14 @@ fn scale_dimension(dimension: u32, resolution_percent: u8) -> u32 {
     scaled.max(1) as u32
 }
 
-fn scale_mouse_to_internal(
-    mouse: [f32; 2],
-    output_size: PhysicalSize<u32>,
-    internal_size: PhysicalSize<u32>,
-) -> [f32; 2] {
-    if output_size.width == 0 || output_size.height == 0 {
-        return mouse;
-    }
-    let x_scale = internal_size.width as f32 / output_size.width as f32;
-    let y_scale = internal_size.height as f32 / output_size.height as f32;
-    [mouse[0] * x_scale, mouse[1] * y_scale]
+fn scene_resolution_uniform(surface: DesktopRect, scene: DesktopRect, scale: f32) -> [f32; 4] {
+    let scene_width = (scene.width.max(1) as f32 * scale).max(1.0);
+    let scene_height = (scene.height.max(1) as f32 * scale).max(1.0);
+    let origin_x = (surface.x - scene.x) as f32 * scale;
+    // Winit display origins are top-left while fragment coordinates are bottom-left.
+    let surface_top = surface.y - scene.y;
+    let origin_y = (scene.height - surface_top - surface.height) as f32 * scale;
+    [scene_width, scene_height, origin_x, origin_y]
 }
 
 fn pick_surface_format(
@@ -860,11 +984,33 @@ mod tests {
     }
 
     #[test]
-    fn scales_mouse_coordinates_into_internal_space() {
-        let output = PhysicalSize::new(1920, 1080);
-        let internal = PhysicalSize::new(960, 540);
-        let scaled = scale_mouse_to_internal([960.0, 540.0], output, internal);
-        assert_eq!(scaled, [480.0, 270.0]);
+    fn viewport_uniform_converts_top_left_monitor_origins() {
+        let scene = DesktopRect {
+            x: -1920,
+            y: -200,
+            width: 4480,
+            height: 1440,
+        };
+        let left = DesktopRect {
+            x: -1920,
+            y: 0,
+            width: 1920,
+            height: 1080,
+        };
+        let right = DesktopRect {
+            x: 0,
+            y: -200,
+            width: 2560,
+            height: 1440,
+        };
+        assert_eq!(
+            scene_resolution_uniform(left, scene, 1.0),
+            [4480.0, 1440.0, 0.0, 160.0]
+        );
+        assert_eq!(
+            scene_resolution_uniform(right, scene, 0.5),
+            [2240.0, 720.0, 960.0, 0.0]
+        );
     }
 
     #[test]

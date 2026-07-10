@@ -9,6 +9,7 @@ pub enum UpdateTrigger {
 pub enum UpdaterStatus {
     Disabled,
     Unsupported,
+    ExternallyManaged,
     Idle,
     Checking,
     UpdateAvailable,
@@ -23,6 +24,7 @@ impl UpdaterStatus {
         match self {
             Self::Disabled => "Disabled",
             Self::Unsupported => "Unsupported",
+            Self::ExternallyManaged => "Managed by Homebrew",
             Self::Idle => "Idle",
             Self::Checking => "Checking",
             Self::UpdateAvailable => "Update Available",
@@ -52,7 +54,13 @@ mod linux;
 #[cfg(target_os = "linux")]
 pub use linux::{initialize, restart_installed_app, RestartContext, UpdaterRuntime};
 
-#[cfg(not(any(windows, target_os = "linux")))]
+#[cfg(target_os = "macos")]
+mod macos;
+
+#[cfg(target_os = "macos")]
+pub use macos::{initialize, restart_installed_app, RestartContext, UpdaterRuntime};
+
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 mod non_windows {
     use super::*;
     use crate::config::UpdaterConfig;
@@ -109,5 +117,5 @@ mod non_windows {
     }
 }
 
-#[cfg(not(any(windows, target_os = "linux")))]
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 pub use non_windows::{initialize, restart_installed_app, RestartContext, UpdaterRuntime};

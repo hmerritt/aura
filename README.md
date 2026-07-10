@@ -44,6 +44,34 @@ scoop bucket add hmerritt https://github.com/hmerritt/scoop-bucket
 scoop install hmerritt/aura
 ```
 
+#### ➡️ macOS (Apple Silicon, macOS 14+)
+
+The Homebrew cask is the preferred installation. Once the `aura` cask has
+been added to the maintainer's tap:
+
+```sh
+brew install --cask aura
+```
+
+Aura is distributed with an ad-hoc signature and is not notarized. The first
+launch may need approval in **System Settings → Privacy & Security**. Aura will
+also request login startup; if macOS requires consent, use the menu-bar action
+to open **General → Login Items**. Homebrew owns application updates:
+
+```sh
+brew upgrade --cask aura
+```
+
+The raw formula is an alternative for users who want `brew services`:
+
+```sh
+brew install aura
+brew services start aura
+```
+
+See [the macOS support notes](docs/macos.md) for packaging, startup, and
+Gatekeeper details.
+
 ## ⚡ Features
 
 - Small in size, low memory footprint (~3MB when in `image` mode)
@@ -54,8 +82,8 @@ scoop install hmerritt/aura
 - Caches remote images locally for faster switching
 - Automatically re-encodes images for wider format support: `jpeg` | `png` | `bmp` | `gif` | `webp`
 - Tray icon to trigger a new image quickly
-- Built-in self-updater for seemless updates
-- **Shader** mode which engages a GPU-accelerated shader renderer, allowing for live animated wallpapers
+- Built-in self-updater on Windows/Linux; Homebrew-managed updates on macOS
+- **Shader** mode which engages a GPU-accelerated shader renderer (Metal on macOS), allowing for live animated wallpapers
 
 ## 📝 Config
 

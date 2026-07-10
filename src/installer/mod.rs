@@ -6,6 +6,7 @@ pub enum StartupRegistrationStatus {
     SkippedNotInstalled,
     AlreadyRegistered,
     RegisteredNow,
+    ApprovalRequired,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,7 +63,12 @@ pub fn locate_update_exe() -> Result<PathBuf> {
     anyhow::bail!("squirrel updates are only supported on Windows")
 }
 
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(target_os = "macos")))]
 pub fn ensure_startup_registered() -> Result<StartupRegistrationStatus> {
     Ok(StartupRegistrationStatus::SkippedNotInstalled)
+}
+
+#[cfg(target_os = "macos")]
+pub fn ensure_startup_registered() -> Result<StartupRegistrationStatus> {
+    crate::macos_app::ensure_login_item()
 }

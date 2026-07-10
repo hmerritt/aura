@@ -18,6 +18,10 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Install cargo-llvm-cov
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        uses: taiki-e/install-action@cargo-llvm-cov
+
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
 
@@ -25,12 +29,40 @@ jobs:
         run: cargo build --release --locked
 
       - name: Test
+        if: github.event_name != 'push' || github.ref != 'refs/heads/master'
         run: cargo test --locked --all-targets
 
+      - name: Collect coverage from tests
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        run: |
+          cargo llvm-cov clean --workspace
+          cargo llvm-cov --no-report --locked --all-targets
+
       - name: Test shader golden images
+        if: github.event_name != 'push' || github.ref != 'refs/heads/master'
         env:
           WGPU_BACKEND: dx12
         run: cargo test --locked renderer::golden_tests::portable_shaders_match_legacy_goldens -- --ignored --exact --test-threads=1
+
+      - name: Collect coverage from shader golden images
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        env:
+          WGPU_BACKEND: dx12
+        run: cargo llvm-cov --no-report --locked -- renderer::golden_tests::portable_shaders_match_legacy_goldens --ignored --exact --test-threads=1
+
+      - name: Generate LCOV report
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        run: cargo llvm-cov report --lcov --output-path lcov.info
+
+      - name: Upload coverage to Coveralls
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        continue-on-error: true
+        uses: coverallsapp/github-action@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          file: lcov.info
+          format: lcov
+          fail-on-error: false
 
       - name: Upload shader golden failures
         if: failure()
@@ -88,3 +120,74 @@ jobs:
 
       - name: Build release and all shader targets
         run: cargo build --release --locked
+
+  macos_arm64:
+    runs-on: macos-14
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "14.0"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Verify native Apple Silicon runner
+        run: test "$(uname -m)" = arm64
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Validate packaging and Homebrew templates
+        run: |
+          bash -n scripts/macos/package-release.sh
+          plutil -lint packaging/macos/Info.plist.in
+          ruby -c brew/Casks/aura.rb.in
+          ruby -c brew/Formula/aura.rb.in
+          template_dir=$(mktemp -d)
+          mkdir -p "$template_dir/Casks" "$template_dir/Formula"
+          sed \
+            -e 's/@VERSION@/1.2.3/g' \
+            -e 's/@DMG_SHA256@/0000000000000000000000000000000000000000000000000000000000000000/g' \
+            -e 's|@DMG_URL@|https://github.com/hmerritt/aura/releases/download/1.2.3/aura-macos-arm64.dmg|g' \
+            brew/Casks/aura.rb.in > "$template_dir/Casks/aura.rb"
+          sed \
+            -e 's/@VERSION@/1.2.3/g' \
+            -e 's/@TARBALL_SHA256@/0000000000000000000000000000000000000000000000000000000000000000/g' \
+            -e 's|@TARBALL_URL@|https://github.com/hmerritt/aura/releases/download/1.2.3/aura-macos-arm64.tar.gz|g' \
+            brew/Formula/aura.rb.in > "$template_dir/Formula/aura.rb"
+          ruby -c "$template_dir/Casks/aura.rb"
+          ruby -c "$template_dir/Formula/aura.rb"
+          brew style "$template_dir/Casks/aura.rb" "$template_dir/Formula/aura.rb"
+
+      - name: Check
+        run: cargo check --locked --all-targets --target aarch64-apple-darwin
+
+      - name: Test
+        run: cargo test --locked --all-targets --target aarch64-apple-darwin
+
+      - name: Test shader golden images with Metal
+        env:
+          WGPU_BACKEND: metal
+        run: cargo test --locked --target aarch64-apple-darwin renderer::golden_tests::portable_shaders_match_legacy_goldens -- --ignored --exact --test-threads=1
+
+      - name: Upload shader golden failures
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: shader-golden-failures-macos-arm64
+          path: target/shader-golden-failures
+          if-no-files-found: ignore
+
+      - name: Build and validate release package
+        run: |
+          cargo build --release --locked --target aarch64-apple-darwin
+          test "$(lipo -archs target/aarch64-apple-darwin/release/aura)" = arm64
+          version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)
+          target/aarch64-apple-darwin/release/aura --version | grep -F "Version $version"
+          bash scripts/macos/package-release.sh \
+            --version "$version" \
+            --binary target/aarch64-apple-darwin/release/aura \
+            --output release-assets
