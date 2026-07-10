@@ -21,7 +21,7 @@ float aura_ascii_luminance(vec2 frag_coord, vec2 resolution, float time, vec2 mo
     float font_size = 8.0;
     vec2 grid_scaled = frag_coord / font_size;
     vec2 grid_pos = floor(grid_scaled);
-    vec2 local_uv = fract(grid_scaled);
+    vec2 local_uv = grid_scaled - trunc(grid_scaled);
     vec2 grid_center = grid_pos * font_size + vec2(font_size * 0.5);
     vec2 uv = grid_center / resolution * 2.0 - vec2(1.0);
     uv.x *= resolution.x / resolution.y;
@@ -38,7 +38,7 @@ float aura_ascii_luminance(vec2 frag_coord, vec2 resolution, float time, vec2 mo
 
 float aura_glass_height(vec2 uv) {
     vec2 sheared = vec2(uv.x + uv.y * 0.15, uv.x * -0.15 + uv.y) * 4.0;
-    vec2 p = fract(sheared) - vec2(0.5);
+    vec2 p = sheared - trunc(sheared) - vec2(0.5);
     return smoothstep(0.48, 0.38, max(abs(p.x), abs(p.y)));
 }
 

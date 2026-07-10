@@ -50,7 +50,7 @@ vec4 aura_main(vec2 fragCoord, AuraUniforms uniforms) {
     float grid_size = 10.0;
     vec2 grid_pos = fragCoord / grid_size;
     vec2 cell_index = floor(grid_pos);
-    vec2 local_uv = fract(grid_pos);
+    vec2 local_uv = grid_pos - trunc(grid_pos);
     vec2 uv = cell_index * grid_size / resolution * 2.0 - vec2(1.0);
     uv.x *= resolution.x / resolution.y;
     float time = uniforms.time_seconds * 0.5;

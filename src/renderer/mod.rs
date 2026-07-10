@@ -10,6 +10,8 @@ pub enum RendererEvent {
 mod desktop_windows;
 #[cfg(windows)]
 mod engine;
+#[cfg(all(test, windows))]
+mod golden_tests;
 #[cfg(any(windows, target_os = "linux"))]
 pub(crate) mod precompiled;
 #[cfg(windows)]

@@ -1,7 +1,8 @@
 float aura_silk_noise(vec2 tex_coord) {
     const float e = 2.7182817;
     vec2 value = e * sin(e * tex_coord);
-    return fract(value.x * value.y * (1.0 + tex_coord.x));
+    float noise = value.x * value.y * (1.0 + tex_coord.x);
+    return noise - trunc(noise);
 }
 
 vec2 aura_silk_rotate(vec2 uv, float angle) {

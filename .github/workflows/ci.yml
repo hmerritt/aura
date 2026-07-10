@@ -27,6 +27,19 @@ jobs:
       - name: Test
         run: cargo test --locked --all-targets
 
+      - name: Test shader golden images
+        env:
+          WGPU_BACKEND: dx12
+        run: cargo test --locked renderer::golden_tests::portable_shaders_match_legacy_goldens -- --ignored --exact --test-threads=1
+
+      - name: Upload shader golden failures
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: shader-golden-failures
+          path: target/shader-golden-failures
+          if-no-files-found: ignore
+
   linux:
     runs-on: ubuntu-24.04
     env:
