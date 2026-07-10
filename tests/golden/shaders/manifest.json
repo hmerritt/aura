@@ -1,0 +1,261 @@
+{
+  "schemaVersion": 1,
+  "baselineCommit": "fb226d6",
+  "width": 128,
+  "height": 128,
+  "format": "rgba8unorm",
+  "captures": [
+    {
+      "shader": "dither_asci_1",
+      "case": "initial",
+      "timeSeconds": 0.0,
+      "frameIndex": 0,
+      "mouseEnabled": false,
+      "resolution": [
+        128.0,
+        128.0,
+        0.0,
+        0.0
+      ],
+      "mouse": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "file": "dither_asci_1/initial.png",
+      "blake3": "543f34811ffde305e1f479bb8d07754d7c0231304e4da2b7894d9b42205c9be2"
+    },
+    {
+      "shader": "dither_asci_1",
+      "case": "animated",
+      "timeSeconds": 3.25,
+      "frameIndex": 195,
+      "mouseEnabled": true,
+      "resolution": [
+        128.0,
+        128.0,
+        0.0,
+        0.0
+      ],
+      "mouse": [
+        96.0,
+        40.0,
+        0.0,
+        0.0
+      ],
+      "file": "dither_asci_1/animated.png",
+      "blake3": "bef9c71881c220cc522cf061c531b4355a9852d0e93ad7214e06350e9def7c38"
+    },
+    {
+      "shader": "dither_asci_2",
+      "case": "initial",
+      "timeSeconds": 0.0,
+      "frameIndex": 0,
+      "mouseEnabled": false,
+      "resolution": [
+        128.0,
+        128.0,
+        0.0,
+        0.0
+      ],
+      "mouse": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "file": "dither_asci_2/initial.png",
+      "blake3": "492f4f36462e9fc6671e310110bb24502fc75c937e360cf9a6ea9cd79de3f645"
+    },
+    {
+      "shader": "dither_asci_2",
+      "case": "animated",
+      "timeSeconds": 3.25,
+      "frameIndex": 195,
+      "mouseEnabled": true,
+      "resolution": [
+        128.0,
+        128.0,
+        0.0,
+        0.0
+      ],
+      "mouse": [
+        96.0,
+        40.0,
+        0.0,
+        0.0
+      ],
+      "file": "dither_asci_2/animated.png",
+      "blake3": "56504c8e39ba077034c1ee98b782cb28467587804f2a67d62b27cc3cd19da680"
+    },
+    {
+      "shader": "dither_warp",
+      "case": "initial",
+      "timeSeconds": 0.0,
+      "frameIndex": 0,
+      "mouseEnabled": false,
+      "resolution": [
+        128.0,
+        128.0,
+        0.0,
+        0.0
+      ],
+      "mouse": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "file": "dither_warp/initial.png",
+      "blake3": "4a290571955935a702b89f94f8f3ba30cdf7b60e60afcb1664cf50c2c37c5dc1"
+    },
+    {
+      "shader": "dither_warp",
+      "case": "animated",
+      "timeSeconds": 3.25,
+      "frameIndex": 195,
+      "mouseEnabled": true,
+      "resolution": [
+        128.0,
+        128.0,
+        0.0,
+        0.0
+      ],
+      "mouse": [
+        96.0,
+        40.0,
+        0.0,
+        0.0
+      ],
+      "file": "dither_warp/animated.png",
+      "blake3": "1511860f8e4bee5517af238650a36ec3db72d682842f643073b65f51cace7cf3"
+    },
+    {
+      "shader": "gradient_glossy",
+      "case": "initial",
+      "timeSeconds": 0.0,
+      "frameIndex": 0,
+      "mouseEnabled": false,
+      "resolution": [
+        128.0,
+        128.0,
+        0.0,
+        0.0
+      ],
+      "mouse": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "file": "gradient_glossy/initial.png",
+      "blake3": "db4c673467dde3f977e87c501820992cef5fa7ff3d81a765adf74f9ae4e1bb0b"
+    },
+    {
+      "shader": "gradient_glossy",
+      "case": "animated",
+      "timeSeconds": 3.25,
+      "frameIndex": 195,
+      "mouseEnabled": true,
+      "resolution": [
+        128.0,
+        128.0,
+        0.0,
+        0.0
+      ],
+      "mouse": [
+        96.0,
+        40.0,
+        0.0,
+        0.0
+      ],
+      "file": "gradient_glossy/animated.png",
+      "blake3": "27308437e3c8b1cd6c4c502542698e7e92d27f708efb1a21ef0d1d705eb8f2e1"
+    },
+    {
+      "shader": "limestone_cave",
+      "case": "initial",
+      "timeSeconds": 0.0,
+      "frameIndex": 0,
+      "mouseEnabled": false,
+      "resolution": [
+        128.0,
+        128.0,
+        0.0,
+        0.0
+      ],
+      "mouse": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "file": "limestone_cave/initial.png",
+      "blake3": "eb2e861042e734f3226a9f5bc555c84a7856fd8810624a23a4b2142f67ad0b5e"
+    },
+    {
+      "shader": "limestone_cave",
+      "case": "animated",
+      "timeSeconds": 3.25,
+      "frameIndex": 195,
+      "mouseEnabled": true,
+      "resolution": [
+        128.0,
+        128.0,
+        0.0,
+        0.0
+      ],
+      "mouse": [
+        96.0,
+        40.0,
+        0.0,
+        0.0
+      ],
+      "file": "limestone_cave/animated.png",
+      "blake3": "2b72bd88df5b23cca1514dfab18f828014b90187e6055a4cbe7b5051d3b1f301"
+    },
+    {
+      "shader": "silk",
+      "case": "initial",
+      "timeSeconds": 0.0,
+      "frameIndex": 0,
+      "mouseEnabled": false,
+      "resolution": [
+        128.0,
+        128.0,
+        0.0,
+        0.0
+      ],
+      "mouse": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "file": "silk/initial.png",
+      "blake3": "2ad110d375ab749671bdbfe5a7157fb8b78d35f84bc0f3c0286be3921447835a"
+    },
+    {
+      "shader": "silk",
+      "case": "animated",
+      "timeSeconds": 3.25,
+      "frameIndex": 195,
+      "mouseEnabled": true,
+      "resolution": [
+        128.0,
+        128.0,
+        0.0,
+        0.0
+      ],
+      "mouse": [
+        96.0,
+        40.0,
+        0.0,
+        0.0
+      ],
+      "file": "silk/animated.png",
+      "blake3": "f6c6f5c0da2db1b6970262d81984772ce307419f30a231360bcb3075b37cd39d"
+    }
+  ]
+}

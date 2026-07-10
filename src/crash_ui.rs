@@ -1,5 +1,6 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 
+#[cfg(any(windows, target_os = "linux"))]
 static DIALOG_SHOWN: AtomicBool = AtomicBool::new(false);
 
 #[cfg(windows)]
@@ -158,13 +159,106 @@ mod windows_impl {
 #[cfg(windows)]
 pub use windows_impl::{install_panic_hook, show_fatal_error_dialog, show_native_crash_dialog};
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+mod linux_impl {
+    use super::*;
+    use notify_rust::{Notification, Timeout, Urgency};
+    use std::backtrace::Backtrace;
+    use std::io::Write;
+
+    pub fn install_panic_hook(debug_requested: bool) {
+        let previous_hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |panic_info| {
+            previous_hook(panic_info);
+            let summary = panic_summary(panic_info);
+            let backtrace = Backtrace::force_capture();
+            let _ = writeln!(
+                std::io::stderr(),
+                "Aura panic: {summary}\nbacktrace:\n{backtrace}"
+            );
+
+            let debug_hint = if debug_requested {
+                crate::debug_capture::debug_log_path()
+                    .ok()
+                    .map(|path| format!(" Diagnostics: {}", path.display()))
+                    .unwrap_or_default()
+            } else {
+                " Run Aura with --debug to retain a full diagnostic log.".to_string()
+            };
+            notify_once(
+                "Aura - Unexpected Crash",
+                &format!("Aura crashed unexpectedly. {summary}.{debug_hint}"),
+            );
+        }));
+    }
+
+    pub fn show_fatal_error_dialog(error: &str) {
+        let backtrace = Backtrace::force_capture();
+        let _ = writeln!(
+            std::io::stderr(),
+            "Aura fatal error: {}\nbacktrace:\n{backtrace}",
+            error.trim()
+        );
+        notify_once(
+            "Aura - Fatal Error",
+            &format!("Aura must close: {}", error.trim()),
+        );
+    }
+
+    fn notify_once(title: &str, body: &str) {
+        if !mark_dialog_shown(&DIALOG_SHOWN) {
+            return;
+        }
+        if let Err(error) = Notification::new()
+            .appname("Aura")
+            .summary(title)
+            .body(body)
+            .icon("dialog-error")
+            .urgency(Urgency::Critical)
+            .timeout(Timeout::Never)
+            .show()
+        {
+            let _ = writeln!(std::io::stderr(), "failed to show notification: {error}");
+        }
+    }
+
+    fn panic_summary(panic_info: &std::panic::PanicHookInfo<'_>) -> String {
+        let payload = if let Some(value) = panic_info.payload().downcast_ref::<&str>() {
+            (*value).to_string()
+        } else if let Some(value) = panic_info.payload().downcast_ref::<String>() {
+            value.clone()
+        } else {
+            "panic payload is unavailable".to_string()
+        };
+
+        panic_info.location().map_or(payload.clone(), |location| {
+            format!("{payload} ({}:{})", location.file(), location.line())
+        })
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn notification_gate_only_allows_first_error() {
+            let gate = AtomicBool::new(false);
+            assert!(mark_dialog_shown(&gate));
+            assert!(!mark_dialog_shown(&gate));
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+pub use linux_impl::{install_panic_hook, show_fatal_error_dialog};
+
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn install_panic_hook(_debug_requested: bool) {}
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn show_fatal_error_dialog(_error: &str) {}
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn show_native_crash_dialog(
     _exception_code: u32,
     _exception_address: usize,
@@ -172,6 +266,7 @@ pub fn show_native_crash_dialog(
 ) {
 }
 
+#[cfg(any(windows, target_os = "linux"))]
 fn mark_dialog_shown(flag: &AtomicBool) -> bool {
     !flag.swap(true, Ordering::SeqCst)
 }

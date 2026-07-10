@@ -1,9 +1,8 @@
 use crate::errors::Result;
 use std::path::Path;
 
-#[cfg(not(windows))]
-use anyhow::bail;
-
+#[cfg(target_os = "linux")]
+mod linux;
 #[cfg(windows)]
 mod windows;
 
@@ -16,17 +15,22 @@ pub fn default_backend() -> Box<dyn WallpaperBackend> {
     Box::new(windows::WindowsWallpaperBackend::new())
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 pub fn default_backend() -> Box<dyn WallpaperBackend> {
-    Box::new(UnsupportedWallpaperBackend)
+    Box::new(linux::LinuxWallpaperBackend)
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 struct UnsupportedWallpaperBackend;
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 impl WallpaperBackend for UnsupportedWallpaperBackend {
     fn set_wallpaper(&self, _path: &Path) -> Result<()> {
-        bail!("this build only supports wallpaper updates on Windows")
+        anyhow::bail!("wallpaper updates require Windows, GNOME, or KDE Plasma")
     }
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+pub fn default_backend() -> Box<dyn WallpaperBackend> {
+    Box::new(UnsupportedWallpaperBackend)
 }

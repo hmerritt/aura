@@ -9,7 +9,7 @@ on:
       - master
 
 jobs:
-  test_build:
+  windows:
     runs-on: windows-latest
     steps:
       - name: Checkout
@@ -17,11 +17,6 @@ jobs:
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-
-      - name: Install rust-gpu nightly toolchain (must match shaders/rust-toolchain.toml)
-        shell: pwsh
-        run: |
-          rustup toolchain install nightly-2026-05-22 --profile minimal --component rust-src --component rustc-dev --component llvm-tools
 
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
@@ -31,3 +26,65 @@ jobs:
 
       - name: Test
         run: cargo test --locked --all-targets
+
+      - name: Test shader golden images
+        env:
+          WGPU_BACKEND: dx12
+        run: cargo test --locked renderer::golden_tests::portable_shaders_match_legacy_goldens -- --ignored --exact --test-threads=1
+
+      - name: Upload shader golden failures
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: shader-golden-failures
+          path: target/shader-golden-failures
+          if-no-files-found: ignore
+
+  linux:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            arch: x86_64
+          - runner: ubuntu-22.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.runner }}
+    env:
+      QSB: /usr/lib/qt6/bin/qsb
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux shader and companion validators
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes dbus-daemon nodejs qt6-declarative-dev-tools qt6-shader-baker shellcheck
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Validate companion metadata and source
+        run: |
+          test "$(uname -m)" = "${{ matrix.arch }}"
+          shellcheck install.sh scripts/linux/*.sh
+          dash -n install.sh
+          python3 scripts/linux/validate-companions.py
+          node --check --input-type=module < integrations/linux/gnome/extension.js
+          /usr/lib/qt6/bin/qmlformat integrations/linux/plasma/contents/ui/main.qml >/dev/null
+          bash scripts/linux/test-installer.sh
+
+      - name: Check
+        run: cargo check --locked --all-targets
+
+      - name: Test
+        run: cargo test --locked --all-targets
+
+      - name: Test private session bus integration
+        run: dbus-run-session -- env AURA_TEST_PRIVATE_BUS=1 cargo test --locked linux_desktop::tests::private_session_bus_roundtrip_and_single_instance_rejection -- --exact
+
+      - name: Build release and all shader targets
+        run: cargo build --release --locked

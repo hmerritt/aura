@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 pub enum TrayEvent {
     NextWallpaper,
     ReloadSettings,
+    OpenSettings,
     CheckForUpdates,
     Exit,
 }
@@ -183,16 +184,32 @@ pub(crate) fn format_config_duration(duration: Duration) -> String {
     parts.join(" ")
 }
 
+#[cfg(target_os = "linux")]
+mod linux;
 #[cfg(windows)]
 mod windows;
 
 #[cfg(windows)]
-pub use windows::{spawn, try_acquire_single_instance, SingleInstanceGuard};
+pub use windows::{
+    open_settings, try_acquire_single_instance, SingleInstanceGuard, TrayController,
+};
 
-#[cfg(not(windows))]
+#[cfg(windows)]
+pub async fn spawn(
+    config_path: std::path::PathBuf,
+    event_tx: tokio::sync::mpsc::UnboundedSender<TrayEvent>,
+    session_stats: std::sync::Arc<SessionStats>,
+) -> crate::errors::Result<TrayController> {
+    windows::spawn(config_path, event_tx, session_stats)
+}
+
+#[cfg(target_os = "linux")]
+pub use linux::{open_settings, spawn, TrayController};
+
+#[cfg(not(any(windows, target_os = "linux")))]
 pub struct TrayController;
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 impl TrayController {
     pub fn new() -> Self {
         Self
@@ -204,9 +221,9 @@ pub struct SingleInstanceGuard;
 
 #[cfg(not(windows))]
 use crate::errors::Result;
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 use std::path::PathBuf;
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 use tokio::sync::mpsc::UnboundedSender;
 
 #[cfg(not(windows))]
@@ -214,13 +231,18 @@ pub fn try_acquire_single_instance() -> Result<Option<SingleInstanceGuard>> {
     Ok(Some(SingleInstanceGuard))
 }
 
-#[cfg(not(windows))]
-pub fn spawn(
+#[cfg(not(any(windows, target_os = "linux")))]
+pub async fn spawn(
     _config_path: PathBuf,
     _event_tx: UnboundedSender<TrayEvent>,
     _session_stats: std::sync::Arc<SessionStats>,
 ) -> Result<TrayController> {
     Ok(TrayController::new())
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+pub fn open_settings(_path: &std::path::Path) -> Result<()> {
+    anyhow::bail!("opening settings is unsupported on this desktop")
 }
 
 #[cfg(test)]

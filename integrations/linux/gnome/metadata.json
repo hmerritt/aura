@@ -1,0 +1,8 @@
+{
+  "uuid": "aura@hmerritt.github.io",
+  "name": "Aura Desktop",
+  "description": "GNOME Shell renderer and controls for Aura",
+  "shell-version": ["45", "46", "47", "48", "49", "50"],
+  "url": "https://github.com/hmerritt/aura",
+  "version": 1
+}

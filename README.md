@@ -14,7 +14,7 @@ Includes an optional <code>shader</code> mode, which engages a GPU-accelerated s
 <p align="center">
   <a href="https://github.com/hmerritt/aura/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/hmerritt/aura"></a>
   <a href="https://github.com/hmerritt/aura/releases/latest"><img alt="Downloads" src="https://img.shields.io/github/downloads/hmerritt/aura/total"></a>
-  <a href="./LICENSE.txt"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue"></a>
+  <a href="./LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue"></a>
 </p>
 
 <p align="center">
@@ -29,7 +29,13 @@ https://github.com/user-attachments/assets/500d83a2-5c5e-4722-8a4e-b544f1f27784
 
 ## 💾 Install
 
-[**➡️ Manually Download The Latest Release Here**](https://github.com/hmerritt/aura/releases/latest), or install via one of the supported package managers:
+[**➡️ Manually download the latest release here**](https://github.com/hmerritt/aura/releases/latest), or use the installer for your platform.
+
+#### ➡️ Linux
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/hmerritt/aura/master/install.sh | sh
+```
 
 #### ➡️ Windows via Scoop
 

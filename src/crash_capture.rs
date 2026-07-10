@@ -1,20 +1,146 @@
+#[cfg(windows)]
 use crate::crash_ui;
-use anyhow::{Context, Result};
+#[cfg(windows)]
+use anyhow::Context;
+use anyhow::Result;
+#[cfg(windows)]
 use std::fs::{self, OpenOptions};
+#[cfg(windows)]
 use std::io::Write;
+#[cfg(windows)]
 use std::path::{Path, PathBuf};
+#[cfg(windows)]
 use std::sync::OnceLock;
+#[cfg(windows)]
 use time::format_description::well_known::Rfc3339;
+#[cfg(windows)]
 use time::OffsetDateTime;
 
+#[cfg(windows)]
 const APP_DIR_NAME: &str = "aura";
+#[cfg(windows)]
 const CRASH_DUMP_FILENAME: &str = "aura-crash.dmp";
+#[cfg(windows)]
 const CRASH_TEXT_FILENAME: &str = "aura-crash.txt";
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn install() -> Result<()> {
     Ok(())
 }
+
+#[cfg(target_os = "linux")]
+mod linux_impl {
+    use super::*;
+    use anyhow::Context;
+    use std::fs::{self, OpenOptions};
+    use std::os::fd::IntoRawFd;
+    use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+
+    const CRASH_TEXT_FILENAME: &str = "aura-crash.txt";
+    static INSTALLED: AtomicBool = AtomicBool::new(false);
+    static CRASH_FD: AtomicI32 = AtomicI32::new(-1);
+
+    pub fn install() -> Result<()> {
+        if INSTALLED.swap(true, Ordering::SeqCst) {
+            return Ok(());
+        }
+
+        let state_dir = dirs::state_dir()
+            .or_else(dirs::data_local_dir)
+            .context("failed to resolve Linux state directory")?
+            .join("aura");
+        fs::create_dir_all(&state_dir)
+            .with_context(|| format!("failed to create crash directory {}", state_dir.display()))?;
+        let crash_path = state_dir.join(CRASH_TEXT_FILENAME);
+        let file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&crash_path)
+            .with_context(|| format!("failed to open crash log {}", crash_path.display()))?;
+        CRASH_FD.store(file.into_raw_fd(), Ordering::SeqCst);
+
+        for signal in [
+            libc::SIGSEGV,
+            libc::SIGABRT,
+            libc::SIGBUS,
+            libc::SIGILL,
+            libc::SIGFPE,
+        ] {
+            install_signal_handler(signal)?;
+        }
+        Ok(())
+    }
+
+    fn install_signal_handler(signal: libc::c_int) -> Result<()> {
+        let mut action: libc::sigaction = unsafe { std::mem::zeroed() };
+        action.sa_sigaction = fatal_signal_handler as *const () as usize;
+        action.sa_flags = libc::SA_RESETHAND;
+        unsafe {
+            libc::sigemptyset(&mut action.sa_mask);
+            if libc::sigaction(signal, &action, std::ptr::null_mut()) != 0 {
+                return Err(std::io::Error::last_os_error()).with_context(|| {
+                    format!("failed to install fatal signal handler for signal {signal}")
+                });
+            }
+        }
+        Ok(())
+    }
+
+    unsafe extern "C" fn fatal_signal_handler(signal: libc::c_int) {
+        let mut message = [0_u8; 64];
+        let prefix = b"Aura received fatal signal ";
+        message[..prefix.len()].copy_from_slice(prefix);
+        let mut length = prefix.len();
+        length += write_decimal(signal, &mut message[length..]);
+        message[length] = b'\n';
+        length += 1;
+
+        unsafe {
+            libc::write(libc::STDERR_FILENO, message.as_ptr().cast(), length);
+            let fd = CRASH_FD.load(Ordering::Relaxed);
+            if fd >= 0 {
+                libc::write(fd, message.as_ptr().cast(), length);
+                libc::fsync(fd);
+            }
+            libc::signal(signal, libc::SIG_DFL);
+            libc::raise(signal);
+            libc::_exit(128 + signal);
+        }
+    }
+
+    fn write_decimal(value: libc::c_int, output: &mut [u8]) -> usize {
+        let mut value = value.max(0) as u32;
+        let mut reverse = [0_u8; 10];
+        let mut count = 0;
+        loop {
+            reverse[count] = b'0' + (value % 10) as u8;
+            count += 1;
+            value /= 10;
+            if value == 0 {
+                break;
+            }
+        }
+        for index in 0..count {
+            output[index] = reverse[count - index - 1];
+        }
+        count
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn formats_signal_number_without_allocating() {
+            let mut output = [0_u8; 10];
+            let length = write_decimal(11, &mut output);
+            assert_eq!(&output[..length], b"11");
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+pub use linux_impl::install;
 
 #[cfg(windows)]
 mod windows_impl {
@@ -119,7 +245,7 @@ mod windows_impl {
             .open(path)
             .with_context(|| format!("failed to open crash dump file {}", path.display()))?;
 
-        let mut exception = MINIDUMP_EXCEPTION_INFORMATION {
+        let exception = MINIDUMP_EXCEPTION_INFORMATION {
             ThreadId: unsafe { GetCurrentThreadId() },
             ExceptionPointers: exception_info as *mut EXCEPTION_POINTERS,
             ClientPointers: 0,
@@ -133,7 +259,7 @@ mod windows_impl {
                 GetCurrentProcessId(),
                 file.as_raw_handle() as HANDLE,
                 dump_flags,
-                &mut exception,
+                &exception,
                 std::ptr::null(),
                 std::ptr::null(),
             )
@@ -225,6 +351,7 @@ mod windows_impl {
 #[cfg(windows)]
 pub use windows_impl::install;
 
+#[cfg(windows)]
 fn crash_timestamp() -> String {
     OffsetDateTime::now_utc()
         .format(&Rfc3339)

@@ -36,7 +36,7 @@ struct PendingShutdown {
 
 impl ShaderRenderer {
     pub fn start(config: ShaderConfig) -> Result<Self> {
-        let shader_bytes = resolve_shader_bytes(&config)?;
+        let shader_assets = resolve_shader_assets(&config)?;
 
         let (event_tx, event_rx) = mpsc::unbounded_channel::<RendererEvent>();
         let (init_tx, init_rx) = std::sync::mpsc::channel::<Result<EventLoopProxy<UserEvent>>>();
@@ -44,7 +44,7 @@ impl ShaderRenderer {
         let join_handle = thread::Builder::new()
             .name("aura-shader-renderer".to_string())
             .spawn(move || {
-                run_renderer_thread(thread_config, shader_bytes, event_tx, init_tx);
+                run_renderer_thread(thread_config, shader_assets, event_tx, init_tx);
             })
             .context("failed to spawn shader renderer thread")?;
 
@@ -64,12 +64,12 @@ impl ShaderRenderer {
     }
 
     pub async fn apply_config(&self, config: ShaderConfig) -> Result<()> {
-        let shader_bytes = resolve_shader_bytes(&config)?;
+        let shader_assets = resolve_shader_assets(&config)?;
         let (result_tx, result_rx) = oneshot::channel();
         self.proxy
             .send_event(UserEvent::ApplyConfig {
                 config,
-                shader_bytes,
+                shader_assets,
                 result_tx,
             })
             .map_err(|error| anyhow!("failed to send renderer config update: {error}"))?;
@@ -165,14 +165,14 @@ enum UserEvent {
     },
     ApplyConfig {
         config: ShaderConfig,
-        shader_bytes: &'static [u8],
+        shader_assets: &'static precompiled::ShaderAssets,
         result_tx: oneshot::Sender<Result<()>>,
     },
 }
 
 fn run_renderer_thread(
     config: ShaderConfig,
-    shader_bytes: &'static [u8],
+    shader_assets: &'static precompiled::ShaderAssets,
     event_tx: UnboundedSender<RendererEvent>,
     init_tx: std::sync::mpsc::Sender<Result<EventLoopProxy<UserEvent>>>,
 ) {
@@ -189,7 +189,7 @@ fn run_renderer_thread(
     let proxy = event_loop.create_proxy();
     let _ = init_tx.send(Ok(proxy.clone()));
 
-    let mut app = RendererApp::new(config, shader_bytes, event_tx);
+    let mut app = RendererApp::new(config, shader_assets, event_tx);
     if let Err(error) = event_loop.run_app(&mut app) {
         app.emit_fatal(format!("renderer loop failed: {error}"));
     }
@@ -208,13 +208,13 @@ struct RendererApp {
     geometry_poll_interval: Duration,
     last_desktop_rect: Option<DesktopRect>,
     frame_interval: Duration,
-    shader_bytes: &'static [u8],
+    shader_assets: &'static precompiled::ShaderAssets,
 }
 
 impl RendererApp {
     fn new(
         config: ShaderConfig,
-        shader_bytes: &'static [u8],
+        shader_assets: &'static precompiled::ShaderAssets,
         event_tx: UnboundedSender<RendererEvent>,
     ) -> Self {
         let geometry_poll_interval = Duration::from_millis(1000);
@@ -230,7 +230,7 @@ impl RendererApp {
             paused: false,
             enabled: true,
             next_frame_at: Instant::now(),
-            shader_bytes,
+            shader_assets,
         }
     }
 
@@ -263,11 +263,15 @@ impl RendererApp {
         Ok(())
     }
 
-    fn apply_config(&mut self, config: ShaderConfig, shader_bytes: &'static [u8]) -> Result<()> {
+    fn apply_config(
+        &mut self,
+        config: ShaderConfig,
+        shader_assets: &'static precompiled::ShaderAssets,
+    ) -> Result<()> {
         let frame_interval = frame_interval_for_target_fps(config.target_fps);
         let Some(window) = self.window.as_ref().cloned() else {
             self.config = config;
-            self.shader_bytes = shader_bytes;
+            self.shader_assets = shader_assets;
             self.frame_interval = frame_interval;
             return Ok(());
         };
@@ -281,18 +285,18 @@ impl RendererApp {
         }
 
         if let Some(runtime) = self.runtime.as_mut() {
-            runtime.apply_config(shader_bytes, config.clone(), target_rect)?;
+            runtime.apply_config(shader_assets, config.clone(), target_rect)?;
         } else {
             self.runtime = Some(WgpuRuntime::new(
                 window.clone(),
-                shader_bytes,
+                shader_assets,
                 config.clone(),
                 target_rect,
             )?);
         }
 
         self.config = config;
-        self.shader_bytes = shader_bytes;
+        self.shader_assets = shader_assets;
         self.frame_interval = frame_interval;
         self.enabled = true;
         self.paused = false;
@@ -432,7 +436,7 @@ impl ApplicationHandler<UserEvent> for RendererApp {
 
         let runtime = match WgpuRuntime::new(
             window.clone(),
-            self.shader_bytes,
+            self.shader_assets,
             self.config.clone(),
             desktop_rect,
         ) {
@@ -504,10 +508,10 @@ impl ApplicationHandler<UserEvent> for RendererApp {
             }
             UserEvent::ApplyConfig {
                 config,
-                shader_bytes,
+                shader_assets,
                 result_tx,
             } => {
-                let result = self.apply_config(config, shader_bytes);
+                let result = self.apply_config(config, shader_assets);
                 let _ = result_tx.send(result);
             }
         }
@@ -549,9 +553,9 @@ fn frame_interval_for_target_fps(target_fps: u16) -> Duration {
     Duration::from_secs_f64(1.0 / f64::from(target_fps))
 }
 
-fn resolve_shader_bytes(config: &ShaderConfig) -> Result<&'static [u8]> {
+fn resolve_shader_assets(config: &ShaderConfig) -> Result<&'static precompiled::ShaderAssets> {
     let shader_name = config.name.clone();
-    precompiled::shader_bytes(&shader_name).ok_or_else(|| {
+    precompiled::shader_assets(&shader_name).ok_or_else(|| {
         let available = precompiled::shader_names();
         anyhow!(
             "configured shader \"{}\" is not available; precompiled shaders: {}",
@@ -627,7 +631,7 @@ mod tests {
                 desktop_scope: crate::config::ShaderDesktopScope::Virtual,
                 color_space: crate::config::ShaderColorSpace::Unorm,
             },
-            &[],
+            precompiled::shader_assets("gradient_glossy").unwrap(),
             event_tx,
         );
         app.enabled = true;

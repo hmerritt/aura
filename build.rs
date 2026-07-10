@@ -3,6 +3,11 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use naga::back::spv;
+use naga::front::glsl;
+use naga::valid::{Capabilities, ValidationFlags, Validator};
+use naga::ShaderStage;
+
 const TRAY_ICON_RESOURCE_ID: u16 = 101;
 const NEXT_BACKGROUND_ICON_RESOURCE_ID: u16 = 203;
 const REFRESH_ICON_RESOURCE_ID: u16 = 204;
@@ -14,8 +19,59 @@ const REFRESH_ICON_FALLBACK_RESOURCE_ID: u16 = 304;
 const RELOAD_SETTINGS_ICON_FALLBACK_RESOURCE_ID: u16 = 305;
 const SETTINGS_ICON_FALLBACK_RESOURCE_ID: u16 = 301;
 const EXIT_ICON_FALLBACK_RESOURCE_ID: u16 = 302;
-// Keep this in sync with shaders/rust-toolchain.toml and CI workflows.
-const RUSTGPU_TOOLCHAIN: &str = "nightly-2026-05-22";
+const SHADER_VERTEX_SOURCE: &str = r#"#version 450
+layout(location = 0) out vec2 aura_uv;
+
+void main() {
+    vec2 position;
+    if (gl_VertexIndex == 0) {
+        position = vec2(-1.0, -1.0);
+    } else if (gl_VertexIndex == 1) {
+        position = vec2(3.0, -1.0);
+    } else {
+        position = vec2(-1.0, 3.0);
+    }
+    aura_uv = position * 0.5 + 0.5;
+    gl_Position = vec4(position, 0.0, 1.0);
+}
+"#;
+
+const SHADER_UNIFORMS_SOURCE: &str = r#"
+struct AuraUniforms {
+    float time_seconds;
+    float frame_index;
+    float mouse_enabled;
+    float padding;
+    vec4 resolution;
+    vec4 mouse;
+};
+"#;
+
+const VULKAN_FRAGMENT_PREFIX: &str = r#"#version 450
+layout(set = 0, binding = 0, std140) uniform AuraUniformBlock {
+    float time_seconds;
+    float frame_index;
+    float mouse_enabled;
+    float padding;
+    vec4 resolution;
+    vec4 mouse;
+} aura_uniforms;
+layout(location = 0) out vec4 aura_output;
+"#;
+
+const VULKAN_FRAGMENT_SUFFIX: &str = r#"
+void main() {
+    AuraUniforms uniforms = AuraUniforms(
+        aura_uniforms.time_seconds,
+        aura_uniforms.frame_index,
+        aura_uniforms.mouse_enabled,
+        aura_uniforms.padding,
+        aura_uniforms.resolution,
+        aura_uniforms.mouse
+    );
+    aura_output = aura_main(gl_FragCoord.xy, uniforms);
+}
+"#;
 
 fn main() {
     println!("cargo:rerun-if-changed=assets/tray.png");
@@ -29,156 +85,175 @@ fn main() {
     println!("cargo:rerun-if-env-changed=AURA_VERSION_PRERELEASE");
     println!("cargo:rerun-if-env-changed=AURA_VERSION_METADATA");
     println!("cargo:rerun-if-env-changed=AURA_BUILD_DATE");
+    println!("cargo:rerun-if-env-changed=QSB");
 
     let manifest_dir =
         PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is required"));
     emit_version_metadata(&manifest_dir);
 
-    let target = std::env::var("TARGET").unwrap_or_default();
-    if !target.contains("windows") {
-        return;
-    }
-
     let out_dir = PathBuf::from(
         std::env::var("OUT_DIR").expect("OUT_DIR is required for resource generation"),
     );
 
-    compile_precompiled_shaders(&manifest_dir, &out_dir);
-    generate_windows_resources(&manifest_dir, &out_dir);
+    let target = std::env::var("TARGET").unwrap_or_default();
+    compile_precompiled_shaders(&manifest_dir, &out_dir, &target);
+    if target.contains("windows") {
+        generate_windows_resources(&manifest_dir, &out_dir);
+    }
 }
 
-fn compile_precompiled_shaders(manifest_dir: &Path, out_dir: &Path) {
-    let shaders_dir = manifest_dir.join("shaders");
-    println!("cargo:rerun-if-changed={}", shaders_dir.display());
-    let shader_builder_manifest = shaders_dir.join("shader_builder").join("Cargo.toml");
-    if !shader_builder_manifest.exists() {
-        panic!(
-            "missing shader builder manifest: {}",
-            shader_builder_manifest.display()
-        );
-    }
-
-    emit_rerun_if_changed_recursive(&shaders_dir.join("rust-toolchain.toml"));
-    emit_rerun_if_changed_recursive(&shaders_dir.join("shader_builder"));
-
-    let shader_crates = discover_shader_crates(&shaders_dir);
-    if shader_crates.is_empty() {
-        panic!(
-            "no shader crates found in {}; expected at least one crate besides shader_builder",
-            shaders_dir.display()
-        );
+fn compile_precompiled_shaders(manifest_dir: &Path, out_dir: &Path, target: &str) {
+    let cores_dir = manifest_dir.join("shaders").join("cores");
+    println!("cargo:rerun-if-changed={}", cores_dir.display());
+    let shader_cores = discover_shader_cores(&cores_dir);
+    if shader_cores.is_empty() {
+        panic!("no .glsl shader cores found in {}", cores_dir.display());
     }
 
     let compiled_dir = out_dir.join("precompiled_shaders");
-    fs::create_dir_all(&compiled_dir).unwrap_or_else(|error| {
-        panic!(
-            "failed to create precompiled shader output directory {}: {}",
-            compiled_dir.display(),
-            error
-        )
-    });
+    fs::create_dir_all(&compiled_dir)
+        .unwrap_or_else(|error| panic!("failed to create {}: {}", compiled_dir.display(), error));
 
-    let mut compiled = Vec::with_capacity(shader_crates.len());
-    for (shader_name, shader_crate_dir) in shader_crates {
-        emit_rerun_if_changed_recursive(&shader_crate_dir);
+    let vertex_spv = compiled_dir.join("aura_vertex.spv");
+    compile_glsl_to_spirv(
+        "shared vertex",
+        SHADER_VERTEX_SOURCE,
+        ShaderStage::Vertex,
+        "main",
+        &vertex_spv,
+    );
 
-        let output_spv = compiled_dir.join(format!("{shader_name}.spv"));
-        let output = Command::new("rustup")
-            .arg("run")
-            .arg(RUSTGPU_TOOLCHAIN)
-            .arg("cargo")
-            .arg("run")
-            .arg("--release")
-            .arg("--quiet")
-            .arg("--manifest-path")
-            .arg(&shader_builder_manifest)
-            .arg("--")
-            .arg("--shader-crate")
-            .arg(&shader_crate_dir)
-            .arg("--out")
-            .arg(&output_spv)
-            .env_remove("RUSTC")
-            .env_remove("RUSTDOC")
-            .env_remove("RUSTUP_TOOLCHAIN")
-            .current_dir(manifest_dir)
-            .output()
-            .unwrap_or_else(|error| {
-                panic!(
-                    "failed to execute shader build for {}: {}",
-                    shader_name, error
-                )
-            });
-
-        if !output.status.success() {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            panic!(
-                "shader build failed for {}\nstdout:\n{}\nstderr:\n{}",
-                shader_name,
-                stdout.trim(),
-                stderr.trim()
-            );
-        }
-
-        if !output_spv.exists() {
-            panic!(
-                "shader build succeeded but output is missing for {}: {}",
-                shader_name,
-                output_spv.display()
-            );
-        }
-
-        compiled.push((shader_name, output_spv));
+    let linux_target = target.contains("linux");
+    let qsb = linux_target.then(find_qsb).flatten();
+    if linux_target && qsb.is_none() {
+        panic!("Qt Shader Tools qsb is required for Plasma shader support; set QSB to its path");
     }
 
-    write_shader_registry(out_dir, &compiled);
-}
+    let mut compiled = Vec::with_capacity(shader_cores.len());
+    for (shader_name, core_path) in shader_cores {
+        let core = fs::read_to_string(&core_path)
+            .unwrap_or_else(|error| panic!("failed to read {}: {}", core_path.display(), error));
+        let fragment_source = format!(
+            "{VULKAN_FRAGMENT_PREFIX}\n{SHADER_UNIFORMS_SOURCE}\n{core}\n{VULKAN_FRAGMENT_SUFFIX}"
+        );
+        let fragment_spv = compiled_dir.join(format!("{shader_name}.fragment.spv"));
+        compile_glsl_to_spirv(
+            &shader_name,
+            &fragment_source,
+            ShaderStage::Fragment,
+            "main",
+            &fragment_spv,
+        );
 
-fn discover_shader_crates(shaders_dir: &Path) -> Vec<(String, PathBuf)> {
-    let mut shader_crates = Vec::new();
-
-    let entries = fs::read_dir(shaders_dir)
-        .unwrap_or_else(|error| panic!("failed to read {}: {}", shaders_dir.display(), error));
-    for entry in entries {
-        let entry = entry.unwrap_or_else(|error| {
-            panic!(
-                "failed to read an entry from {}: {}",
-                shaders_dir.display(),
-                error
-            )
+        let mut linux_assets = None;
+        if let Some(qsb) = qsb.as_ref() {
+            linux_assets = Some(generate_linux_shader_assets(
+                &compiled_dir,
+                &shader_name,
+                &core,
+                qsb,
+            ));
+        }
+        compiled.push(CompiledShader {
+            name: shader_name,
+            vertex_spv: vertex_spv.clone(),
+            fragment_spv,
+            linux: linux_assets,
         });
-        let path = entry.path();
-        if !path.is_dir() {
-            continue;
-        }
-
-        let shader_name = entry.file_name().to_string_lossy().to_string();
-        if shader_name == "shader_builder" {
-            continue;
-        }
-        if !path.join("Cargo.toml").exists() {
-            continue;
-        }
-
-        shader_crates.push((shader_name, path));
     }
 
-    shader_crates.sort_by(|a, b| a.0.cmp(&b.0));
-    shader_crates
+    write_shader_registry(out_dir, &compiled, linux_target);
 }
 
-fn write_shader_registry(out_dir: &Path, compiled: &[(String, PathBuf)]) {
+#[derive(Debug)]
+struct CompiledShader {
+    name: String,
+    vertex_spv: PathBuf,
+    fragment_spv: PathBuf,
+    linux: Option<LinuxShaderAssets>,
+}
+
+#[derive(Debug)]
+struct LinuxShaderAssets {
+    gnome_glsl: PathBuf,
+    plasma_vertex_qsb: PathBuf,
+    plasma_fragment_qsb: PathBuf,
+}
+
+fn discover_shader_cores(cores_dir: &Path) -> Vec<(String, PathBuf)> {
+    let entries = fs::read_dir(cores_dir)
+        .unwrap_or_else(|error| panic!("failed to read {}: {}", cores_dir.display(), error));
+    let mut cores = entries
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().and_then(|value| value.to_str()) == Some("glsl"))
+        .filter_map(|path| {
+            let name = path.file_stem()?.to_str()?.to_string();
+            Some((name, path))
+        })
+        .collect::<Vec<_>>();
+    cores.sort_by(|left, right| left.0.cmp(&right.0));
+    cores
+}
+
+fn compile_glsl_to_spirv(
+    label: &str,
+    source: &str,
+    stage: ShaderStage,
+    entry_point: &str,
+    output: &Path,
+) {
+    let mut frontend = glsl::Frontend::default();
+    let module = frontend
+        .parse(&glsl::Options::from(stage), source)
+        .unwrap_or_else(|errors| panic!("failed to parse {label} GLSL: {errors}"));
+    let info = Validator::new(ValidationFlags::all(), Capabilities::all())
+        .validate(&module)
+        .unwrap_or_else(|error| panic!("failed to validate {label} GLSL: {error}"));
+    let options = spv::Options {
+        lang_version: (1, 3),
+        ..Default::default()
+    };
+    let words = spv::write_vec(
+        &module,
+        &info,
+        &options,
+        Some(&spv::PipelineOptions {
+            shader_stage: stage,
+            entry_point: entry_point.to_string(),
+        }),
+    )
+    .unwrap_or_else(|error| panic!("failed to emit {label} SPIR-V: {error}"));
+    let mut bytes = Vec::with_capacity(words.len() * size_of::<u32>());
+    for word in words {
+        bytes.extend_from_slice(&word.to_le_bytes());
+    }
+    fs::write(output, bytes)
+        .unwrap_or_else(|error| panic!("failed to write {}: {}", output.display(), error));
+}
+
+fn write_shader_registry(out_dir: &Path, compiled: &[CompiledShader], linux_target: bool) {
     let mut source = String::from("&[\n");
-    for (shader_name, shader_path) in compiled {
-        let shader_name_literal = shader_name.replace('"', "\\\"");
-        let shader_path_literal = shader_path
-            .to_string_lossy()
-            .replace('\\', "/")
-            .replace('"', "\\\"");
-        source.push_str(&format!(
-            "    (\"{}\", include_bytes!(\"{}\") as &[u8]),\n",
-            shader_name_literal, shader_path_literal
-        ));
+    for shader in compiled {
+        let name = shader.name.replace('"', "\\\"");
+        let vertex = rust_path_literal(&shader.vertex_spv);
+        let fragment = rust_path_literal(&shader.fragment_spv);
+        if linux_target {
+            let linux = shader
+                .linux
+                .as_ref()
+                .expect("Linux assets must be generated");
+            let gnome = rust_path_literal(&linux.gnome_glsl);
+            let plasma_vertex = rust_path_literal(&linux.plasma_vertex_qsb);
+            let plasma_fragment = rust_path_literal(&linux.plasma_fragment_qsb);
+            source.push_str(&format!(
+                "    ShaderAssets::new(\"{name}\", include_bytes!(\"{vertex}\"), include_bytes!(\"{fragment}\"), include_str!(\"{gnome}\"), include_bytes!(\"{plasma_vertex}\"), include_bytes!(\"{plasma_fragment}\")),\n"
+            ));
+        } else {
+            source.push_str(&format!(
+                "    ShaderAssets::new(\"{name}\", include_bytes!(\"{vertex}\"), include_bytes!(\"{fragment}\")),\n"
+            ));
+        }
     }
     source.push_str("]\n");
 
@@ -192,32 +267,161 @@ fn write_shader_registry(out_dir: &Path, compiled: &[(String, PathBuf)]) {
     });
 }
 
-fn emit_rerun_if_changed_recursive(path: &Path) {
-    if !path.exists() {
-        return;
+fn rust_path_literal(path: &Path) -> String {
+    path.to_string_lossy()
+        .replace('\\', "/")
+        .replace('"', "\\\"")
+}
+
+fn find_qsb() -> Option<PathBuf> {
+    if let Some(configured) = std::env::var_os("QSB") {
+        let path = PathBuf::from(configured);
+        if command_is_available(&path) {
+            return Some(path);
+        }
+        panic!(
+            "QSB points to an unavailable executable: {}",
+            path.display()
+        );
     }
 
-    if path.is_file() {
-        println!("cargo:rerun-if-changed={}", path.display());
-        return;
-    }
+    [
+        PathBuf::from("qsb"),
+        PathBuf::from("qsb6"),
+        PathBuf::from("/usr/lib/qt6/bin/qsb"),
+        PathBuf::from("/usr/lib64/qt6/bin/qsb"),
+        PathBuf::from("/usr/lib/x86_64-linux-gnu/qt6/bin/qsb"),
+    ]
+    .into_iter()
+    .find(|candidate| command_is_available(candidate))
+}
 
-    if path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .map(|name| name == "target")
+fn command_is_available(command: &Path) -> bool {
+    Command::new(command)
+        .arg("--version")
+        .output()
+        .map(|output| output.status.success())
         .unwrap_or(false)
-    {
-        return;
-    }
+}
 
-    let entries = fs::read_dir(path)
-        .unwrap_or_else(|error| panic!("failed to read {}: {}", path.display(), error));
-    for entry in entries {
-        let entry = entry.unwrap_or_else(|error| {
-            panic!("failed to read an entry from {}: {}", path.display(), error)
-        });
-        emit_rerun_if_changed_recursive(&entry.path());
+fn generate_linux_shader_assets(
+    compiled_dir: &Path,
+    shader_name: &str,
+    core: &str,
+    qsb: &Path,
+) -> LinuxShaderAssets {
+    let gnome_glsl = compiled_dir.join(format!("{shader_name}.gnome.glsl"));
+    let gnome_source = format!("{SHADER_UNIFORMS_SOURCE}\n{core}\n");
+    fs::write(&gnome_glsl, gnome_source)
+        .unwrap_or_else(|error| panic!("failed to write {}: {}", gnome_glsl.display(), error));
+
+    let plasma_vertex = compiled_dir.join(format!("{shader_name}.plasma.vert"));
+    let plasma_fragment = compiled_dir.join(format!("{shader_name}.plasma.frag"));
+    let plasma_vertex_qsb = compiled_dir.join(format!("{shader_name}.plasma.vert.qsb"));
+    let plasma_fragment_qsb = compiled_dir.join(format!("{shader_name}.plasma.frag.qsb"));
+
+    let vertex_source = r#"#version 440
+layout(location = 0) in vec4 qt_Vertex;
+layout(location = 1) in vec2 qt_MultiTexCoord0;
+layout(location = 0) out vec2 aura_uv;
+layout(std140, binding = 0) uniform AuraQtUniforms {
+    mat4 qt_Matrix;
+    float qt_Opacity;
+    float aura_time_seconds;
+    float aura_frame_index;
+    float aura_mouse_enabled;
+    float aura_padding;
+    vec4 aura_resolution;
+    vec4 aura_mouse;
+    vec4 aura_origin;
+    float aura_color_space_srgb;
+};
+void main() {
+    aura_uv = qt_MultiTexCoord0;
+    gl_Position = qt_Matrix * qt_Vertex;
+}
+"#;
+    let fragment_source = format!(
+        r#"#version 440
+layout(location = 0) in vec2 aura_uv;
+layout(location = 0) out vec4 aura_output;
+layout(std140, binding = 0) uniform AuraQtUniforms {{
+    mat4 qt_Matrix;
+    float qt_Opacity;
+    float aura_time_seconds;
+    float aura_frame_index;
+    float aura_mouse_enabled;
+    float aura_padding;
+    vec4 aura_resolution;
+    vec4 aura_mouse;
+    vec4 aura_origin;
+    float aura_color_space_srgb;
+}};
+{SHADER_UNIFORMS_SOURCE}
+{core}
+vec3 aura_linear_to_srgb(vec3 value) {{
+    vec3 low = value * 12.92;
+    vec3 high = 1.055 * pow(max(value, vec3(0.0)), vec3(1.0 / 2.4)) - vec3(0.055);
+    return vec3(
+        value.r <= 0.0031308 ? low.r : high.r,
+        value.g <= 0.0031308 ? low.g : high.g,
+        value.b <= 0.0031308 ? low.b : high.b
+    );
+}}
+void main() {{
+    AuraUniforms uniforms = AuraUniforms(
+        aura_time_seconds,
+        max(aura_frame_index, 0.0),
+        max(aura_mouse_enabled, 0.0),
+        max(aura_padding, 0.0),
+        aura_resolution,
+        aura_mouse
+    );
+    vec2 frag_coord = aura_origin.xy + floor(aura_uv * max(aura_origin.zw, vec2(1.0))) + vec2(0.5);
+    vec4 result = aura_main(frag_coord, uniforms);
+    if (aura_color_space_srgb > 0.5)
+        result.rgb = aura_linear_to_srgb(result.rgb);
+    aura_output = result * qt_Opacity;
+}}
+"#
+    );
+    fs::write(&plasma_vertex, vertex_source)
+        .unwrap_or_else(|error| panic!("failed to write {}: {}", plasma_vertex.display(), error));
+    fs::write(&plasma_fragment, fragment_source)
+        .unwrap_or_else(|error| panic!("failed to write {}: {}", plasma_fragment.display(), error));
+
+    run_qsb(qsb, &plasma_vertex, &plasma_vertex_qsb);
+    run_qsb(qsb, &plasma_fragment, &plasma_fragment_qsb);
+
+    LinuxShaderAssets {
+        gnome_glsl,
+        plasma_vertex_qsb,
+        plasma_fragment_qsb,
+    }
+}
+
+fn run_qsb(qsb: &Path, source: &Path, output: &Path) {
+    let result = Command::new(qsb)
+        .arg("-o")
+        .arg(output)
+        .arg(source)
+        .output()
+        .unwrap_or_else(|error| panic!("failed to run {}: {}", qsb.display(), error));
+    if !result.status.success() {
+        panic!(
+            "qsb failed for {}\nstdout:\n{}\nstderr:\n{}",
+            source.display(),
+            String::from_utf8_lossy(&result.stdout).trim(),
+            String::from_utf8_lossy(&result.stderr).trim()
+        );
+    }
+    match fs::metadata(output) {
+        Ok(metadata) if metadata.is_file() && metadata.len() > 0 => {}
+        Ok(_) => panic!(
+            "qsb produced an empty or invalid file at {}",
+            output.display()
+        ),
+        Err(error) => panic!("qsb did not produce {}: {error}", output.display()),
     }
 }
 

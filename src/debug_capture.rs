@@ -83,6 +83,7 @@ fn run_timestamp() -> String {
         .unwrap_or_else(|_| "unknown-timestamp".to_string())
 }
 
+#[cfg(windows)]
 pub fn install_debug_panic_hook() {
     std::panic::set_hook(Box::new(|panic_info| {
         let _ = writeln!(std::io::stderr(), "panic: {panic_info}");

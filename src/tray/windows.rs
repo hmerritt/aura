@@ -4,7 +4,7 @@ use crate::updater::UpdaterStatus;
 use crate::version;
 use anyhow::{anyhow, bail};
 use std::mem::size_of;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::ptr;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
@@ -138,7 +138,6 @@ pub fn spawn(
 
 struct WindowData {
     event_tx: UnboundedSender<TrayEvent>,
-    config_path_wide: Vec<u16>,
     session_stats: Arc<SessionStats>,
     hinstance: HINSTANCE,
     sticky_update_menu_active: bool,
@@ -171,14 +170,9 @@ fn run_tray_loop(
         return Ok(());
     }
 
-    let config_abs = config_path
-        .canonicalize()
-        .unwrap_or(config_path)
-        .to_string_lossy()
-        .to_string();
+    let _ = config_path;
     let user_data = Box::new(WindowData {
         event_tx,
-        config_path_wide: wide_null(&config_abs),
         session_stats: session_stats.clone(),
         hinstance,
         sticky_update_menu_active: false,
@@ -214,8 +208,8 @@ fn run_tray_loop(
         return Ok(());
     }
 
-    let mut nid = create_notify_icon_data(hwnd, hinstance);
-    let add_ok = unsafe { Shell_NotifyIconW(NIM_ADD, &mut nid) };
+    let nid = create_notify_icon_data(hwnd, hinstance);
+    let add_ok = unsafe { Shell_NotifyIconW(NIM_ADD, &nid) };
     if add_ok == 0 {
         unsafe {
             DestroyWindow(hwnd);
@@ -244,7 +238,7 @@ fn run_tray_loop(
     }
 
     unsafe {
-        Shell_NotifyIconW(NIM_DELETE, &mut nid);
+        Shell_NotifyIconW(NIM_DELETE, &nid);
         DestroyWindow(hwnd);
     }
     tracing::info!("tray icon shutdown complete");
@@ -590,7 +584,7 @@ unsafe fn show_context_menu(hwnd: HWND, data: &mut WindowData) {
     }
 }
 
-unsafe fn handle_tray_command(hwnd: HWND, data: &mut WindowData, command_id: u32) {
+unsafe fn handle_tray_command(_hwnd: HWND, data: &mut WindowData, command_id: u32) {
     match command_id {
         TRAY_COMMAND_NEXT_BACKGROUND => {
             let _ = data.event_tx.send(TrayEvent::NextWallpaper);
@@ -608,7 +602,7 @@ unsafe fn handle_tray_command(hwnd: HWND, data: &mut WindowData, command_id: u32
             let _ = data.event_tx.send(TrayEvent::CheckForUpdates);
         }
         TRAY_COMMAND_SETTINGS => {
-            open_settings_from_tray(hwnd, data);
+            let _ = data.event_tx.send(TrayEvent::OpenSettings);
         }
         TRAY_COMMAND_EXIT => {
             let _ = data.event_tx.send(TrayEvent::Exit);
@@ -617,19 +611,24 @@ unsafe fn handle_tray_command(hwnd: HWND, data: &mut WindowData, command_id: u32
     }
 }
 
-unsafe fn open_settings_from_tray(hwnd: HWND, data: &WindowData) {
+pub fn open_settings(path: &Path) -> Result<()> {
     let operation = wide_null("open");
-    let result = ShellExecuteW(
-        hwnd,
-        operation.as_ptr(),
-        data.config_path_wide.as_ptr(),
-        ptr::null(),
-        ptr::null(),
-        SW_SHOWNORMAL,
-    );
+    let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let path = wide_null(&path.to_string_lossy());
+    let result = unsafe {
+        ShellExecuteW(
+            ptr::null_mut(),
+            operation.as_ptr(),
+            path.as_ptr(),
+            ptr::null(),
+            ptr::null(),
+            SW_SHOWNORMAL,
+        )
+    };
     if (result as isize) <= 32 {
-        tracing::warn!("failed to open config from tray settings");
+        bail!("ShellExecuteW failed to open the Aura settings file");
     }
+    Ok(())
 }
 
 unsafe fn insert_command_menu_item(

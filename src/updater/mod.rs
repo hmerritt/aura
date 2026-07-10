@@ -46,7 +46,13 @@ mod windows;
 #[cfg(windows)]
 pub use windows::{initialize, restart_installed_app, RestartContext, UpdaterRuntime};
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+mod linux;
+
+#[cfg(target_os = "linux")]
+pub use linux::{initialize, restart_installed_app, RestartContext, UpdaterRuntime};
+
+#[cfg(not(any(windows, target_os = "linux")))]
 mod non_windows {
     use super::*;
     use crate::config::UpdaterConfig;
@@ -103,5 +109,5 @@ mod non_windows {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 pub use non_windows::{initialize, restart_installed_app, RestartContext, UpdaterRuntime};

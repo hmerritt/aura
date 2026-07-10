@@ -1,0 +1,14 @@
+{
+  "KPackageStructure": "Plasma/Wallpaper",
+  "KPlugin": {
+    "Id": "io.github.hmerritt.Aura",
+    "Name": "Aura",
+    "Description": "Image and live shader wallpaper companion for Aura",
+    "Icon": "preferences-desktop-wallpaper",
+    "Version": "1.0.0",
+    "License": "MIT",
+    "Authors": [
+      {"Name": "Aura contributors"}
+    ]
+  }
+}

@@ -9,7 +9,33 @@ permissions:
   contents: write
 
 jobs:
-  release_windows:
+  validate:
+    runs-on: ubuntu-22.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Validate release version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          [[ "$tag" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "Tag '$tag' must be numeric SemVer (for example 1.2.3)." >&2
+            exit 1
+          }
+          cargo_version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)
+          [[ "$tag" == "$cargo_version" ]] || {
+            echo "Tag '$tag' does not match Cargo.toml version '$cargo_version'." >&2
+            exit 1
+          }
+          echo "version=$tag" >> "$GITHUB_OUTPUT"
+
+  build_windows:
+    needs: validate
     runs-on: windows-latest
     env:
       SQUIRREL_WINDOWS_VERSION: 2.0.1
@@ -17,72 +43,150 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Validate tag format
-        id: tag_check
-        shell: pwsh
-        run: |
-          if ("${{ github.ref_name }}" -match '^\d+\.\d+\.\d+$') {
-            "valid=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          } else {
-            "valid=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-            Write-Host "Tag '${{ github.ref_name }}' does not match numeric semver (e.g. 1.2.3). Skipping release."
-          }
-
       - name: Install Rust
-        if: steps.tag_check.outputs.valid == 'true'
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Install rust-gpu nightly toolchain (must match shaders/rust-toolchain.toml)
-        if: steps.tag_check.outputs.valid == 'true'
-        shell: pwsh
-        run: |
-          rustup toolchain install nightly-2026-05-22 --profile minimal --component rust-src --component rustc-dev --component llvm-tools
-
       - name: Cache Cargo
-        if: steps.tag_check.outputs.valid == 'true'
         uses: Swatinem/rust-cache@v2
 
       - name: Build
-        if: steps.tag_check.outputs.valid == 'true'
         run: cargo build --release --locked
 
       - name: Install UPX
-        if: steps.tag_check.outputs.valid == 'true'
         run: choco install upx -y
 
       - name: Install NuGet CLI
-        if: steps.tag_check.outputs.valid == 'true'
         run: choco install nuget.commandline -y
 
       - name: Compress binary with UPX
-        if: steps.tag_check.outputs.valid == 'true'
         run: upx --best --lzma target\release\aura.exe
 
-      - name: Package artifacts
-        if: steps.tag_check.outputs.valid == 'true'
+      - name: Package standalone artifacts
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Path dist -Force | Out-Null
-          $exeName = "aura-${{ github.ref_name }}-windows.exe"
+          $exeName = "aura-${{ needs.validate.outputs.version }}-windows.exe"
           Copy-Item target\release\aura.exe "dist\$exeName" -Force
-          Compress-Archive -Path "dist\$exeName" -DestinationPath "dist\aura-${{ github.ref_name }}-windows.zip" -Force
+          Compress-Archive -Path "dist\$exeName" -DestinationPath "dist\aura-${{ needs.validate.outputs.version }}-windows.zip" -Force
 
       - name: Package Squirrel artifacts
-        if: steps.tag_check.outputs.valid == 'true'
         shell: pwsh
         run: |
-          .\scripts\windows\package-squirrel.ps1 -Version "${{ github.ref_name }}" -SquirrelWindowsVersion "$env:SQUIRREL_WINDOWS_VERSION"
+          .\scripts\windows\package-squirrel.ps1 -Version "${{ needs.validate.outputs.version }}" -SquirrelWindowsVersion "$env:SQUIRREL_WINDOWS_VERSION"
 
-      - name: Upload release assets
-        if: steps.tag_check.outputs.valid == 'true'
+      - name: Stage release assets
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path release-assets -Force | Out-Null
+          Copy-Item "dist\aura-${{ needs.validate.outputs.version }}-windows.exe" release-assets -Force
+          Copy-Item "dist\aura-${{ needs.validate.outputs.version }}-windows.zip" release-assets -Force
+          Copy-Item "dist\squirrel\aura-${{ needs.validate.outputs.version }}-windows-installer.exe" release-assets -Force
+          Copy-Item "dist\squirrel\aura-${{ needs.validate.outputs.version }}-windows-installer.zip" release-assets -Force
+          Copy-Item dist\squirrel\RELEASES release-assets -Force
+          Copy-Item dist\squirrel\*.nupkg release-assets -Force
+
+      - name: Upload Windows assets
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-windows
+          path: release-assets/*
+          if-no-files-found: error
+
+  build_linux:
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            arch: x86_64
+          - runner: ubuntu-22.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.runner }}
+    env:
+      QSB: /usr/lib/qt6/bin/qsb
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux build and validation tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes binutils dbus-daemon nodejs qt6-declarative-dev-tools qt6-shader-baker shellcheck
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Validate scripts and companions
+        run: |
+          shellcheck install.sh scripts/linux/*.sh
+          dash -n install.sh
+          python3 scripts/linux/validate-companions.py
+          node --check --input-type=module < integrations/linux/gnome/extension.js
+          bash scripts/linux/test-installer.sh
+
+      - name: Test
+        run: |
+          cargo test --locked --all-targets
+          dbus-run-session -- env AURA_TEST_PRIVATE_BUS=1 cargo test --locked linux_desktop::tests::private_session_bus_roundtrip_and_single_instance_rejection -- --exact
+
+      - name: Build release
+        run: cargo build --release --locked
+
+      - name: Validate and package release
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          test "$(uname -m)" = "$ARCH"
+          ./target/release/aura --version | grep -F "Version $VERSION"
+          bash scripts/linux/check-glibc.sh target/release/aura
+          SOURCE_DATE_EPOCH=$(git log -1 --format=%ct) \
+            bash scripts/linux/package-release.sh \
+              --version "$VERSION" \
+              --arch "$ARCH" \
+              --binary target/release/aura \
+              --output release-assets
+
+      - name: Upload Linux asset
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-linux-${{ matrix.arch }}
+          path: release-assets/aura-linux-${{ matrix.arch }}.tar.gz
+          if-no-files-found: error
+
+  publish_draft:
+    needs: [validate, build_windows, build_linux]
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Download release assets
+        uses: actions/download-artifact@v8
+        with:
+          pattern: release-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Generate Linux release manifest
+        run: |
+          bash scripts/linux/generate-manifest.sh \
+            "${{ needs.validate.outputs.version }}" \
+            release-assets \
+            release-assets/aura-linux-manifest
+          cat release-assets/aura-linux-manifest
+
+      - name: Generate release checksums
+        working-directory: release-assets
+        run: sha256sum * > SHA256SUMS
+
+      - name: Create draft release
         uses: softprops/action-gh-release@v3
         with:
           draft: true
           generate_release_notes: true
-          files: |
-            dist/aura-${{ github.ref_name }}-windows.exe
-            dist/aura-${{ github.ref_name }}-windows.zip
-            dist/squirrel/aura-${{ github.ref_name }}-windows-installer.exe
-            dist/squirrel/aura-${{ github.ref_name }}-windows-installer.zip
-            dist/squirrel/RELEASES
-            dist/squirrel/*.nupkg
+          files: release-assets/*
