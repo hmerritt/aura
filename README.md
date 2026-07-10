@@ -31,6 +31,14 @@ https://github.com/user-attachments/assets/500d83a2-5c5e-4722-8a4e-b544f1f27784
 
 [**➡️ Manually download the latest release here**](https://github.com/hmerritt/aura/releases/latest), or use the installer for your platform.
 
+#### ➡️ macOS
+
+> First launch may need approval in **System Settings → Privacy & Security**
+
+```sh
+brew install --cask hmerritt/tap/aura
+```
+
 #### ➡️ Linux
 
 ```sh
@@ -43,34 +51,6 @@ curl -fsSL https://raw.githubusercontent.com/hmerritt/aura/master/install.sh | s
 scoop bucket add hmerritt https://github.com/hmerritt/scoop-bucket
 scoop install hmerritt/aura
 ```
-
-#### ➡️ macOS (Apple Silicon, macOS 14+)
-
-The Homebrew cask is the preferred installation. Once the `aura` cask has
-been added to the maintainer's tap:
-
-```sh
-brew install --cask aura
-```
-
-Aura is distributed with an ad-hoc signature and is not notarized. The first
-launch may need approval in **System Settings → Privacy & Security**. Aura will
-also request login startup; if macOS requires consent, use the menu-bar action
-to open **General → Login Items**. Homebrew owns application updates:
-
-```sh
-brew upgrade --cask aura
-```
-
-The raw formula is an alternative for users who want `brew services`:
-
-```sh
-brew install aura
-brew services start aura
-```
-
-See [the macOS support notes](docs/macos.md) for packaging, startup, and
-Gatekeeper details.
 
 ## ⚡ Features
 
